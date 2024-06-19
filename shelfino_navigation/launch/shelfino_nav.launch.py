@@ -7,7 +7,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, SetEnvironmentVariable
 from launch.conditions import UnlessCondition
 from nav2_common.launch import RewrittenYaml
 from launch import LaunchDescription
@@ -34,10 +34,10 @@ def check_exists(context):
 
 def generate_launch_description():
     shelfino_nav2_pkg = os.path.join(get_package_share_directory('shelfino_navigation'))
-
+    qt_qpa_platform = SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb')
     use_sim_time     = LaunchConfiguration('use_sim_time', default='false')
     robot_id         = LaunchConfiguration('robot_id', default='G')
-    map_file         = LaunchConfiguration('map_file', default=os.path.join(shelfino_nav2_pkg, 'map', 'hexagon.yaml'))
+    map_file         = LaunchConfiguration('map_file', default=os.path.join(shelfino_nav2_pkg, 'maps', 'hexagon.yaml'))
     nav2_params_file = LaunchConfiguration('nav2_params_file', default=os.path.join(shelfino_nav2_pkg,'config', 'shelfino.yaml'))
     rviz_config_file = LaunchConfiguration('rviz_config_file', default=os.path.join(shelfino_nav2_pkg, 'rviz', 'shelfino_nav.rviz'))
     nav2_autostart   = LaunchConfiguration('nav2_autostart', default='true')
@@ -112,7 +112,8 @@ def generate_launch_description():
         
         return
 
-    return LaunchDescription([        
+    return LaunchDescription([    
+        SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb'),
         DeclareLaunchArgument(
             name='use_sim_time', 
             default_value=use_sim_time,
@@ -339,7 +340,7 @@ def generate_launch_description():
             namespace= robot_name,
             arguments=['-d', rviz_config_file],
             parameters=[
-                {'use_sim_time': use_sim_time}
+                {'use_sim_time': use_sim_time},
             ],
             condition=UnlessCondition(headless),
             output='screen'

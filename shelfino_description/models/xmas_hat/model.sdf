@@ -45,6 +45,11 @@
             <scale>0.125931896 0.1007455168 0.0755591376</scale>
           </mesh>
         </geometry>
+        <material>
+          <script>
+            <uri>package://shelfino_description/models/xmas_hat/meshes/Material_001_Base_Color.png</uri>
+          </script>
+        </material>
       </visual>
     </link>
   </model>

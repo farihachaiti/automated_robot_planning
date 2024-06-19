@@ -54,14 +54,14 @@ public:
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-  on_deactivate(const rclcpp_lifecycle::State& state)
+  on_deactivate(const rclcpp_lifecycle::State&)
   {
     LifecycleNode::deactivate();
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-  on_configure(const rclcpp_lifecycle::State& state)
+  on_configure(const rclcpp_lifecycle::State&)
   {
     // Map parameters
     this->declare_parameter("map", "hexagon");
@@ -93,7 +93,7 @@ public:
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-  on_activate(const rclcpp_lifecycle::State& state)
+  on_activate(const rclcpp_lifecycle::State&)
   {
     // If the position was passed, then use it
     if (this->data.x != 0.0 && this->data.y != 0.0) {

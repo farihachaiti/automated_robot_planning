@@ -7,7 +7,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, ExecuteProcess, OpaqueFunction, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -38,6 +38,7 @@ def generate_launch_description():
     shelfino_desc_pkg = get_package_share_directory('shelfino_description')
     shelfino_gaze_pkg = get_package_share_directory('shelfino_gazebo')
 
+    qt_qpa_platform = SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb')
     use_sim_time      = LaunchConfiguration('use_sim_time', default='true')
     shelfino_id       = LaunchConfiguration('shelfino_id', default='G')
     use_gui           = LaunchConfiguration('use_gui')
@@ -81,6 +82,7 @@ def generate_launch_description():
         return
 
     return LaunchDescription([
+        SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb'),
         DeclareLaunchArgument(
             name='use_sim_time', 
             default_value=use_sim_time,
@@ -130,7 +132,8 @@ def generate_launch_description():
             ),
             launch_arguments={
                 'world': gazebo_world_file,
-                'verbose': 'true'
+                'verbose': 'true',
+                
             }.items(),
         ),
 
@@ -139,7 +142,7 @@ def generate_launch_description():
                 os.path.join(gazebo_ros_pkg, 'launch', 'gzclient.launch.py')
             ),
             launch_arguments={
-                'verbose': 'true'
+                'verbose': 'true',
             }.items(), 
             condition=IfCondition(use_gui)
         ),
@@ -152,6 +155,7 @@ def generate_launch_description():
                         '-entity', shelfino_name,
                         '-robot_namespace', shelfino_name],
             condition=IfCondition(spawn_shelfino),
+            
         ),
 
         Node(

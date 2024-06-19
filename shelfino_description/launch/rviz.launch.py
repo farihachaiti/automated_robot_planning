@@ -4,16 +4,16 @@
 
 import os
 import subprocess
-
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, SetEnvironmentVariable
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
 def generate_launch_description():
     shelfino_descr_pkg = get_package_share_directory('shelfino_description')
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
+    qt_qpa_platform = SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb')
 
     def get_namespaces_for_rviz(context, *args, **kwargs):
         """
@@ -58,9 +58,9 @@ def generate_launch_description():
 
 
     return LaunchDescription([
+        SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb'),
         DeclareLaunchArgument(name='use_sim_time', default_value='false', choices=['true', 'false'],
                         description='Flag to toggle between real robot and simulation'),
-
         OpaqueFunction(function=get_namespaces_for_rviz),
 
     ])

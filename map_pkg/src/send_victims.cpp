@@ -65,7 +65,7 @@ public:
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-  on_configure(const rclcpp_lifecycle::State& state)
+  on_configure(const rclcpp_lifecycle::State&)
   {
     // Map parameters
     this->declare_parameter("map", "hexagon");
@@ -178,10 +178,10 @@ public:
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-  on_activate(const rclcpp_lifecycle::State& state)
+  on_activate(const rclcpp_lifecycle::State&)
   {
     std::vector<obstacle> victims = this->rand_victims();
-    if (victims.size() < this->data.n_victims) {
+    if (static_cast<int>(victims.size()) < this->data.n_victims) {
       RCLCPP_ERROR(this->get_logger(), "Could not generate %d victims.", this->data.n_victims);
       return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
     }
@@ -191,7 +191,7 @@ public:
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-  on_deactivate(const rclcpp_lifecycle::State& state)
+  on_deactivate(const rclcpp_lifecycle::State&)
   {
     RCLCPP_INFO(this->get_logger(), "Deactivating node.");
     LifecycleNode::deactivate();
@@ -230,7 +230,7 @@ std::vector<obstacle> VictimPublisher::rand_victims()
 
   std::vector<obstacle> victims;
   auto startTime = this->get_clock()->now();
-  for (uint i=0; i<this->data.n_victims && !overTime(this->get_clock(), startTime, this->data.max_timeout); i++) {
+  for (int i=0; i<this->data.n_victims && !overTime(this->get_clock(), startTime, this->data.max_timeout); i++) {
     victim vict = victim(0.0, 0.0);
     do {
       vict.x = x_dis(gen);

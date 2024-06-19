@@ -51,7 +51,7 @@ public:
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn 
-  on_configure(const rclcpp_lifecycle::State& state)
+  on_configure(const rclcpp_lifecycle::State&)
   {
     this->declare_parameter<std::string>("map", "hexagon");
     this->declare_parameter<double>("dx", 5.0);
@@ -74,7 +74,7 @@ public:
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-  on_activate(const rclcpp_lifecycle::State& state)
+  on_activate(const rclcpp_lifecycle::State&)
   {
     std_msgs::msg::Header hh;
 
@@ -117,7 +117,7 @@ public:
   }
   
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-  on_deactivate(const rclcpp_lifecycle::State& state)
+  on_deactivate(const rclcpp_lifecycle::State&)
   {
     RCLCPP_INFO(this->get_logger(), "Deactivating node.");
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;

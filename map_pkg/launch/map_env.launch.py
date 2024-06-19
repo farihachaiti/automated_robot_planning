@@ -11,8 +11,7 @@ from pathlib import Path
 import launch.logging
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
-                            OpaqueFunction)
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction,SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -42,14 +41,17 @@ def generate_launch_description():
     map_env_params_file = LaunchConfiguration(
         "map_env_params_file", default=map_env_params_file_path
     )
+    qt_qpa_platform = SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb')
 
     # Declare LaunchArguments for exposing launching arguments
     launch_args = [
+        SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb'),
         DeclareLaunchArgument(
             "map_env_params_file",
             default_value=map_env_params_file_path,
             description="Full path to the map_pkg params file to use",
-        ),
+        ),   
+
     ]
 
     # List of nodes to launch
@@ -86,7 +88,7 @@ def generate_launch_description():
 
     # LaunchDescription with the additional launch files
     ld = LaunchDescription()
-
+    # Add the action to set the environment variable
     for launch_arg in launch_args:
         ld.add_action(launch_arg)
 

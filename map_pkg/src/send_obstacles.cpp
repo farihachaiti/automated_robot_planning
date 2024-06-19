@@ -66,7 +66,7 @@ public:
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
-  on_configure(const rclcpp_lifecycle::State& state)
+  on_configure(const rclcpp_lifecycle::State&)
   {
     // Map parameters
     this->declare_parameter("map", "hexagon");
@@ -232,7 +232,7 @@ std::vector<obstacle> ObstaclesPublisher::rand_obstacles()
 
   auto startTime = this->get_clock()->now();
   for (
-    int i=0; 
+    unsigned int i=0; 
     i<this->data.n_obstacles && !overTime(this->get_clock(), startTime, this->data.max_timeout); 
     i++) 
   {
