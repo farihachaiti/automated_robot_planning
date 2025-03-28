@@ -23,10 +23,7 @@ find_package(map_pkg REQUIRED)
 ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
-  automated_robot_planning/shelfino_robot.py
-  automated_robot_planning/robot_controller.py
-  automated_robot_planning/path_planner.py
-  automated_robot_planning/obstacle_detector.py
+${PROJECT_NAME}/robot_controller.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -41,7 +41,7 @@
         <pose>0 0 -0.15 0 0 0</pose>
         <geometry>
           <mesh>
-            <uri>model://xmas_hat/meshes/xmas_hat.dae</uri>
+            <uri>package://shelfino_description/models/xmas_hat/meshes/xmas_hat.dae</uri>
             <scale>0.125931896 0.1007455168 0.0755591376</scale>
           </mesh>
         </geometry>

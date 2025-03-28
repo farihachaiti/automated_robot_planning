@@ -34,7 +34,7 @@ def check_exists(context):
 def generate_launch_description():
     # launch.logging.launch_config.level = logging.DEBUG
     
-    gazebo_ros_pkg    = get_package_share_directory('gazebo_ros')
+    ros_gz_sim_pkg    = get_package_share_directory('ros_gz_sim')  # Updated for Gazebo Harmonic
     shelfino_desc_pkg = get_package_share_directory('shelfino_description')
     shelfino_gaze_pkg = get_package_share_directory('shelfino_gazebo')
 
@@ -54,10 +54,8 @@ def generate_launch_description():
     shelfino_name = PythonExpression(["'", 'shelfino', shelfino_id, "'"])
     model_output = PythonExpression(["'", os.path.join(shelfino_desc_pkg, 'models', 'shelfino'), shelfino_id, ".sdf'"])
     
-    # TODO move models to shelfino_gazebo
+    # Set Gazebo model path
     os.environ["GAZEBO_MODEL_PATH"] = os.path.join(shelfino_desc_pkg, 'models')
-
-    # rviz_config = PythonExpression(["'", os.path.join(get_package_share_directory('shelfino_description'), 'rviz', 'shelfino'), shelfino_id, '.rviz', "'"])
 
     def evaluate_rviz(context, *args, **kwargs):
         """
@@ -128,34 +126,24 @@ def generate_launch_description():
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(gazebo_ros_pkg, 'launch', 'gzserver.launch.py')
+                os.path.join(ros_gz_sim_pkg, 'launch', 'gz_sim.launch.py')  # Updated for Gazebo Harmonic
             ),
             launch_arguments={
                 'world': gazebo_world_file,
                 'verbose': 'true',
-                
             }.items(),
         ),
 
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(gazebo_ros_pkg, 'launch', 'gzclient.launch.py')
-            ),
-            launch_arguments={
-                'verbose': 'true',
-            }.items(), 
-            condition=IfCondition(use_gui)
-        ),
-    
         Node(
-            package='gazebo_ros',
-            executable='spawn_entity.py',
+            package='ros_gz_sim',
+            executable='create',
             arguments=[
-                        '-topic', PythonExpression(["'/", shelfino_name, "/robot_description", "'"]),
-                        '-entity', shelfino_name,
-                        '-robot_namespace', shelfino_name],
+                '-world', 'default',
+                '-file', model_output,
+                '-name', shelfino_name,
+                '-topic', PythonExpression(["'/", shelfino_name, "/robot_description", "'"]),
+            ],
             condition=IfCondition(spawn_shelfino),
-            
         ),
 
         Node(

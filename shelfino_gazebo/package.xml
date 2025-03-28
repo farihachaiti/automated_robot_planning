@@ -9,22 +9,27 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Dependencies for Xacro and ROS 2 -->
   <depend>xacro</depend>
-  <depend>ros_gz</depend>
-  <depend>gazebo_ros_pkgs</depend>
-  <depend>gazebo_ros2_control</depend>
-
   <depend>rclcpp</depend>
-  <depend>gazebo_msgs</depend>
   <depend>geometry_msgs</depend>
 
-  <exec_depend>gazebo_ros</exec_depend>
+  <!-- Dependencies for Gazebo Harmonic (Ignition Gazebo) -->
+  <depend>ros_gz</depend>
+  <depend>ros_gz_sim</depend>
+  <depend>ros_gz_bridge</depend>
+  <depend>ros_gz_control</depend>
 
+  <!-- Dependencies for Gazebo messages -->
+  <depend>ros_gz_interfaces</depend>
+
+  <!-- Test dependencies -->
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
-    <gazebo_ros gazebo_model_path="${prefix}/worlds"/>
+    <!-- Update gazebo_ros to ros_gz for Gazebo Harmonic -->
+    <ros_gz gazebo_model_path="${prefix}/worlds"/>
   </export>
 </package>

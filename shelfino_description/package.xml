@@ -10,14 +10,18 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Dependencies for Xacro and robot state publishing -->
   <depend>xacro</depend>
   <depend>joint_state_publisher</depend>
 
-  <exec_depend>gazebo_ros</exec_depend>
+  <!-- Dependencies for Gazebo Harmonic (Ignition Gazebo) -->
+  <exec_depend>ros_gz</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
-    <gazebo_ros gazebo_model_path="${prefix}/models"/>
-    <gazebo_ros gazebo_model_path="${prefix}/.."/>
+    <!-- Update gazebo_ros to ros_gz for Gazebo Harmonic -->
+    <ros_gz gazebo_model_path="${prefix}/models"/>
+    <ros_gz gazebo_model_path="${prefix}/.."/>
   </export>
 </package>

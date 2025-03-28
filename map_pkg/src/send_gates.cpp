@@ -28,7 +28,7 @@ class GatesPublisher : public rclcpp_lifecycle::LifecycleNode
 {
 private:
   rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr publisher_;
-  rclcpp::Client<gazebo_msgs::srv::SpawnEntity>::SharedPtr spawner_;
+  rclcpp::Client<ros_gz_interfaces::srv::SpawnEntity>::SharedPtr spawner_;
   std::string share_dir;
 
   struct Data {
@@ -71,18 +71,21 @@ public:
     // Gate parameters
     this->declare_parameter("x", 0.0);
     this->declare_parameter("y", 0.0);
-
-    auto qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_custom);
-    
-    this->publisher_ = this->create_publisher<geometry_msgs::msg::PoseArray>("/gate_position", qos);
-    this->spawner_ = this->create_client<gazebo_msgs::srv::SpawnEntity>("/spawn_entity");
-
-    // Get parameters
     this->data.map_name = this->get_parameter("map").as_string();
     if (this->data.map_name != "hexagon" && this->data.map_name != "rectangle"){
       RCLCPP_ERROR(this->get_logger(), "Map parameter must be either hexagon or rectangle.");
       exit(1);
     }
+    auto qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_custom);
+    
+    this->publisher_ = this->create_publisher<geometry_msgs::msg::PoseArray>("/gate_position", qos);
+    //this->spawner_    = this->create_client<gazebo_msgs::srv::SpawnEntity>("/spawn_entity");
+    // Change your client creation to:
+    this->spawner_ = this->create_client<ros_gz_interfaces::srv::SpawnEntity>(
+      "/world/" + this->data.map_name + "/create");  
+
+    // Get parameters
+   
 
     this->data.dx = this->get_parameter("dx").as_double();
     this->data.dy = this->get_parameter("dy").as_double();

@@ -20,7 +20,7 @@
 #include "obstacles_msgs/msg/obstacle_msg.hpp"
 #include "std_msgs/msg/header.hpp"
 
-#include "gazebo_msgs/srv/spawn_entity.hpp"
+#include <ros_gz_interfaces/srv/spawn_entity.hpp> 
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
 
@@ -32,7 +32,7 @@ class VictimPublisher : public rclcpp_lifecycle::LifecycleNode
 private:
   rclcpp::QoS qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_custom);
   rclcpp::Publisher<obstacles_msgs::msg::ObstacleArrayMsg>::SharedPtr publisher_;
-  rclcpp::Client<gazebo_msgs::srv::SpawnEntity>::SharedPtr spawner_;
+  rclcpp::Client<ros_gz_interfaces::srv::SpawnEntity>::SharedPtr spawner_;
   rclcpp::Subscription<lifecycle_msgs::msg::TransitionEvent>::SharedPtr obstacles_tran_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseArray>::SharedPtr gate_sub_;
   rclcpp::Subscription<obstacles_msgs::msg::ObstacleArrayMsg>::SharedPtr obstacles_sub_;
@@ -77,15 +77,18 @@ public:
     this->declare_parameter("n_victims", 3);
     this->declare_parameter("min_weight", 10);
     this->declare_parameter("max_weight", 500);
-
-    this->spawner_ = this->create_client<gazebo_msgs::srv::SpawnEntity>("/spawn_entity");
-
-    // Get parameters
     this->data.map_name = this->get_parameter("map").as_string();
     if (this->data.map_name != "hexagon" && this->data.map_name != "rectangle"){
       RCLCPP_ERROR(this->get_logger(), "Map parameter must be either hexagon or rectangle.");
       exit(1);
     }
+    //this->spawner_    = this->create_client<gazebo_msgs::srv::SpawnEntity>("/spawn_entity");
+    // Change your client creation to:
+    this->spawner_ = this->create_client<ros_gz_interfaces::srv::SpawnEntity>(
+      "/world/" + this->data.map_name + "/create");  
+
+    // Get parameters
+  
     this->data.dx = this->get_parameter("dx").as_double();
     this->data.dy = this->get_parameter("dy").as_double();
     this->data.max_timeout = this->get_parameter("max_timeout").as_int();

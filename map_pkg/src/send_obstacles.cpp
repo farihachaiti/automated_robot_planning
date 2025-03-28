@@ -20,7 +20,7 @@
 #include "obstacles_msgs/msg/obstacle_msg.hpp"
 #include "std_msgs/msg/header.hpp"
 
-#include "gazebo_msgs/srv/spawn_entity.hpp"
+#include <ros_gz_interfaces/srv/spawn_entity.hpp> 
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
 
@@ -33,7 +33,7 @@ class ObstaclesPublisher : public rclcpp_lifecycle::LifecycleNode
 private:
   rclcpp::QoS qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_custom);
   rclcpp::Publisher<obstacles_msgs::msg::ObstacleArrayMsg>::SharedPtr publisher_;
-  rclcpp::Client<gazebo_msgs::srv::SpawnEntity>::SharedPtr spawner_;
+  rclcpp::Client<ros_gz_interfaces::srv::SpawnEntity>::SharedPtr spawner_;
   rclcpp::Subscription<lifecycle_msgs::msg::TransitionEvent>::SharedPtr borders_tran_sub_;
   rclcpp::Subscription<lifecycle_msgs::msg::TransitionEvent>::SharedPtr gates_tran_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseArray>::SharedPtr gate_sub_;
@@ -113,7 +113,10 @@ public:
       return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
     }
 
-    this->spawner_ = this->create_client<gazebo_msgs::srv::SpawnEntity>("/spawn_entity");
+    //this->spawner_    = this->create_client<gazebo_msgs::srv::SpawnEntity>("/spawn_entity");
+    // Change your client creation to:
+    this->spawner_ = this->create_client<ros_gz_interfaces::srv::SpawnEntity>(
+      "/world/" + this->data.map_name + "/create");  
     this->publisher_ = this->create_publisher<obstacles_msgs::msg::ObstacleArrayMsg>("/obstacles", qos);
 
     this->borders_tran_sub_ = this->create_subscription<lifecycle_msgs::msg::TransitionEvent>(
