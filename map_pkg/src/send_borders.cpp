@@ -36,7 +36,7 @@ private:
     std::string map_name;
     double dx;
     double dy;
-  } data ;
+  } data;
 
 public:
   explicit BordersPublisher(bool intra_process_comms = false) 
@@ -45,9 +45,6 @@ public:
     )
   {
     this->gz_models = ament_index_cpp::get_package_share_directory("shelfino_gazebo");
-    this->configure();
-    this->activate();
-    this->deactivate();
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn 
@@ -56,7 +53,7 @@ public:
     this->declare_parameter<std::string>("map", "hexagon");
     this->declare_parameter<double>("dx", 5.0);
     this->declare_parameter<double>("dy", 5.0);
-    this->data.map_name = this->get_parameter("map").as_string();  // hexagon, rectangle
+    this->data.map_name = this->get_parameter("map").as_string();
     this->data.dx = this->get_parameter("dx").as_double();
     this->data.dy = this->get_parameter("dy").as_double();
 
@@ -68,10 +65,8 @@ public:
 
     this->publisher_  = this->create_publisher<geometry_msgs::msg::Polygon>("/map_borders", qos);
     this->pub_        = this->create_publisher<geometry_msgs::msg::PolygonStamped>("/borders", qos);
-    //this->spawner_    = this->create_client<gazebo_msgs::srv::SpawnEntity>("/spawn_entity");
-    // Change your client creation to:
     this->spawner_ = this->create_client<ros_gz_interfaces::srv::SpawnEntity>(
-      "/world/" + this->data.map_name + "/create");  // Replace "empty" with your world name
+      "/world/" + this->data.map_name + "/create");
 
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
   }
@@ -80,7 +75,6 @@ public:
   on_activate(const rclcpp_lifecycle::State&)
   {
     std_msgs::msg::Header hh;
-
     hh.stamp = this->get_clock()->now();
     hh.frame_id = "map";
     
@@ -95,6 +89,7 @@ public:
     }
     else {
       RCLCPP_ERROR(this->get_logger(), "Map name %s not recognized", this->data.map_name.c_str());
+      return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
     }
     
     geometry_msgs::msg::PolygonStamped pol_stamped;
@@ -113,8 +108,28 @@ public:
     pose.orientation.x = 0;
     pose.orientation.y = 0;
     pose.orientation.z = 0;
-    pose.orientation.w = 0;
-    spawn_model(this->get_node_base_interface(), this->spawner_, xml_string, pose, "border", true);
+    pose.orientation.w = 1.0;  // Fixed orientation
+
+    // Wait for service with timeout
+    const auto timeout = std::chrono::seconds(10);
+    auto start = std::chrono::steady_clock::now();
+    
+    while (!this->spawner_->wait_for_service(std::chrono::seconds(1))) {
+      if (!rclcpp::ok()) {
+        RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for service");
+        return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
+      }
+      if (std::chrono::steady_clock::now() - start > timeout) {
+        RCLCPP_ERROR(this->get_logger(), "Timed out waiting for service after 10 seconds");
+        return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
+      }
+      RCLCPP_INFO(this->get_logger(), "Waiting for service...");
+    }
+
+    if (!spawn_model(this->get_node_base_interface(), this->spawner_, xml_string, pose, "border", true)) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to spawn border model");
+      return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
+    }
   
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
   }
@@ -131,11 +146,9 @@ private:
   void map_rectangle(std::string & xml_string, geometry_msgs::msg::Polygon & pol);
 };
 
-void 
-BordersPublisher::map_hexagon(std::string & xml_string, geometry_msgs::msg::Polygon & pol)
+void BordersPublisher::map_hexagon(std::string & xml_string, geometry_msgs::msg::Polygon & pol)
 {
   pol = create_hexagon(this->data.dx);
-  // Read XML file to string
   std::ifstream xml_file(this->gz_models + "/worlds/hexagon_world/model.sdf");
   if (!xml_file.is_open()) {
     RCLCPP_ERROR(this->get_logger(), "Failed to open file %s", 
@@ -148,7 +161,7 @@ BordersPublisher::map_hexagon(std::string & xml_string, geometry_msgs::msg::Poly
     std::istreambuf_iterator<char>()
   );
 
-  float original_size = 12.00;     // 13.20
+  float original_size = 12.00;
   std::string size_string = "<scale>1 1 1</scale>";
   std::string size_replace_string = "<scale>" + 
     std::to_string(this->data.dx/original_size) + " " + 
@@ -161,11 +174,9 @@ BordersPublisher::map_hexagon(std::string & xml_string, geometry_msgs::msg::Poly
   }
 }
 
-void 
-BordersPublisher::map_rectangle(std::string & xml_string, geometry_msgs::msg::Polygon & pol)
+void BordersPublisher::map_rectangle(std::string & xml_string, geometry_msgs::msg::Polygon & pol)
 {
   pol = create_rectangle(this->data.dx, this->data.dy);
-  // Read XML file to string
   std::ifstream xml_file(this->gz_models + "/worlds/rectangle_world/model.sdf");
   if (!xml_file.is_open()) {
     RCLCPP_ERROR(this->get_logger(), "Failed to open file %s", 
@@ -215,7 +226,6 @@ BordersPublisher::map_rectangle(std::string & xml_string, geometry_msgs::msg::Po
     pos += size_replace_string.length();
   }
 }
-
 
 int main(int argc, char * argv[])
 {

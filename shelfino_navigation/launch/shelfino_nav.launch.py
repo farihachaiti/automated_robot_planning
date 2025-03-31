@@ -5,7 +5,7 @@
 
 import os
 from ament_index_python.packages import get_package_share_directory
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, TextSubstitution
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import UnlessCondition
 from nav2_common.launch import RewrittenYaml
@@ -28,9 +28,9 @@ def generate_launch_description():
     initial_y = LaunchConfiguration('initial_y', default='0.0')
     initial_yaw = LaunchConfiguration('initial_yaw', default='0.0')
 
-    # Robot namespace
-    robot_name = ['shelfino', robot_id]
-    namespace = LaunchConfiguration('namespace', default='shelfino'+robot_id)
+    # Robot namespace - using proper substitution concatenation
+    namespace = LaunchConfiguration('namespace', 
+                                  default=['shelfino', robot_id])
 
     # Parameter substitutions
     param_substitutions = {
@@ -39,8 +39,8 @@ def generate_launch_description():
         'odom_frame_id': 'odom',
         'robot_base_frame': 'base_link',
         'global_frame': 'map',
-        'global_costmap.robot_base_frame': [shelfino_name, '/base_link'],
-        'local_costmap.robot_base_frame': [shelfino_name, '/base_link'],
+        'global_costmap.robot_base_frame': ['shelfino', robot_id, '/base_link'],
+        'local_costmap.robot_base_frame': ['shelfino', robot_id, '/base_link'],
         'topic': 'scan',
         'x': initial_x,
         'y': initial_y,
@@ -62,7 +62,6 @@ def generate_launch_description():
         'remappings': [
             ('/tf', 'tf'),
             ('/tf_static', 'tf_static'),
-            ('/cmd_vel', 'cmd_vel_nav'),
             ('/odom', 'odom'),
             ('/scan', 'scan'),
             ('/navigate_to_pose', 'navigate_to_pose')
@@ -71,6 +70,18 @@ def generate_launch_description():
         'respawn': True,
         'respawn_delay': 2.0
     }
+
+    # Velocity smoother needs different cmd_vel remapping
+    velocity_smoother_config = nav2_node_config.copy()
+    velocity_smoother_config['remappings'] = [
+        ('/cmd_vel', 'cmd_vel_nav'),
+        ('/cmd_vel_smoothed', 'cmd_vel'),
+        ('/tf', 'tf'),
+        ('/tf_static', 'tf_static'),
+        ('/odom', 'odom'),
+        ('/scan', 'scan'),
+        ('/navigate_to_pose', 'navigate_to_pose')
+    ]
 
     return LaunchDescription([
         # Launch arguments
@@ -83,6 +94,11 @@ def generate_launch_description():
             'robot_id',
             default_value='0',
             description='ID of the robot'),
+
+        DeclareLaunchArgument(
+            'namespace',
+            default_value=['shelfino', robot_id],
+            description='Robot namespace'),
 
         DeclareLaunchArgument(
             'map_file',
@@ -113,9 +129,22 @@ def generate_launch_description():
             default_value='false',
             description='Run without RViz if true'),
 
+        DeclareLaunchArgument(
+            'initial_x',
+            default_value='0.0',
+            description='Initial x position of the robot'),
+
+        DeclareLaunchArgument(
+            'initial_y',
+            default_value='0.0',
+            description='Initial y position of the robot'),
+
+        DeclareLaunchArgument(
+            'initial_yaw',
+            default_value='0.0',
+            description='Initial yaw orientation of the robot'),
+
         # Nodes
-        # In generate_launch_description()
-        # Replace the existing map_server Node with this (outside robot namespace)
         Node(
             package='nav2_map_server',
             executable='map_server',
@@ -127,13 +156,12 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=2.0
-        )
+        ),
 
         Node(
             package='nav2_amcl',
             executable='amcl',
             name='amcl',
-            parameters=[{'set_initial_pose': True}],
             **nav2_node_config
         ),
 
@@ -155,11 +183,7 @@ def generate_launch_description():
             package='nav2_velocity_smoother',
             executable='velocity_smoother',
             name='velocity_smoother',
-            remappings=[
-                ('cmd_vel', 'cmd_vel_nav'),
-                ('cmd_vel_smoothed', 'cmd_vel')
-            ],
-            **nav2_node_config
+            **velocity_smoother_config
         ),
 
         Node(
@@ -177,7 +201,7 @@ def generate_launch_description():
                     'velocity_smoother'
                 ]}
             ],
-            **nav2_node_config
+            output='screen'
         ),
 
         Node(
@@ -189,5 +213,4 @@ def generate_launch_description():
             condition=UnlessCondition(headless),
             output='screen'
         ),
-
     ])

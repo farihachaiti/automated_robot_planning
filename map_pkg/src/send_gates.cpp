@@ -37,7 +37,7 @@ private:
     double dy;
     double x;
     double y;
-  } data ;
+  } data;
 
 public:
   explicit GatesPublisher(bool intra_process_comms = false) 
@@ -47,10 +47,6 @@ public:
   {
     // Get share directory with ament 
     this->share_dir = ament_index_cpp::get_package_share_directory("map_pkg");
-
-    this->configure();
-    this->activate();
-    this->deactivate();
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
@@ -74,56 +70,60 @@ public:
     this->data.map_name = this->get_parameter("map").as_string();
     if (this->data.map_name != "hexagon" && this->data.map_name != "rectangle"){
       RCLCPP_ERROR(this->get_logger(), "Map parameter must be either hexagon or rectangle.");
-      exit(1);
+      return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
     }
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_custom);
     
     this->publisher_ = this->create_publisher<geometry_msgs::msg::PoseArray>("/gate_position", qos);
-    //this->spawner_    = this->create_client<gazebo_msgs::srv::SpawnEntity>("/spawn_entity");
-    // Change your client creation to:
     this->spawner_ = this->create_client<ros_gz_interfaces::srv::SpawnEntity>(
-      "/world/" + this->data.map_name + "/create");  
+      "/world/" + this->data.map_name + "/create");
 
     // Get parameters
-   
-
     this->data.dx = this->get_parameter("dx").as_double();
     this->data.dy = this->get_parameter("dy").as_double();
     this->data.x = this->get_parameter("x").as_double();
     this->data.y = this->get_parameter("y").as_double();
 
+    RCLCPP_INFO(this->get_logger(), "Service client created for /world/%s/create", 
+               this->data.map_name.c_str());
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
   }
 
   rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
   on_activate(const rclcpp_lifecycle::State&)
   {
+    RCLCPP_INFO(this->get_logger(), "Activating node and spawning gates");
+
+    bool spawn_success = false;
+    
     // If the position was passed, then use it
     if (this->data.x != 0.0 && this->data.y != 0.0) {
-      this->spawn_gates(this->data.x, this->data.y);
+      spawn_success = this->spawn_gates(this->data.x, this->data.y);
     }
     else {
       if (this->data.map_name == "hexagon"){
-        this->rand_hexagon_gate();
+        spawn_success = this->rand_hexagon_gate();
       }
       else if (this->data.map_name == "rectangle"){
-        this->rand_rectangle_gate();
-      }
-      else {
-        RCLCPP_ERROR(this->get_logger(), "Map parameter must be either hexagon or rectangle.");
-        return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
+        spawn_success = this->rand_rectangle_gate();
       }
     }
+
+    if (!spawn_success) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to spawn gates");
+      return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
+    }
+
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
   }
 
 private:
-  void spawn_gates(double x, double y, double th = 0.0);
-  void rand_hexagon_gate();
-  void rand_rectangle_gate();
+  bool spawn_gates(double x, double y, double th = 0.0);
+  bool rand_hexagon_gate();
+  bool rand_rectangle_gate();
 };
 
-void GatesPublisher::rand_hexagon_gate(){
+bool GatesPublisher::rand_hexagon_gate(){
   // Declare random generator
   std::random_device rd;
   std::mt19937 gen(rd());
@@ -138,10 +138,10 @@ void GatesPublisher::rand_hexagon_gate(){
     obs.x = dis_x(gen);
   } while(!is_inside_map(obs, "hexagon", this->data.dx, this->data.dy));
   
-  this->spawn_gates(obs.x, obs.y, th);
+  return this->spawn_gates(obs.x, obs.y, th);
 }
 
-void GatesPublisher::rand_rectangle_gate(){
+bool GatesPublisher::rand_rectangle_gate(){
   // Declare random generator
   std::random_device rd;
   std::mt19937 gen(rd());
@@ -180,18 +180,14 @@ void GatesPublisher::rand_rectangle_gate(){
         break;
       default:
         RCLCPP_ERROR(this->get_logger(), "Random number generator failed, extracted %d, but should be in [0,4)", edge);
-        exit(1);
+        return false;
     }
   } while(!is_inside_map(obs, "rectangle", this->data.dx, this->data.dy));
   
-  this->spawn_gates(obs.x, obs.y, th);
+  return this->spawn_gates(obs.x, obs.y, th);
 }
 
-/**
- * @brief Publish the position of the gate in the hexagon map
- * 
- */
-void GatesPublisher::spawn_gates(double x, double y, double th){
+bool GatesPublisher::spawn_gates(double x, double y, double th){
   std_msgs::msg::Header hh;
   geometry_msgs::msg::Pose pose;
   std::vector<geometry_msgs::msg::Pose> pose_array_temp;
@@ -223,14 +219,20 @@ void GatesPublisher::spawn_gates(double x, double y, double th){
 
   // Spawn gate in gazebo
   std::string xml = std::string((
-    std::istreambuf_iterator<char>(std::ifstream(this->share_dir + "/models/gate/model.sdf").rdbuf())), std::istreambuf_iterator<char>());
-  spawn_model(this->get_node_base_interface(), this->spawner_, xml, pose, "gate");
+    std::istreambuf_iterator<char>(std::ifstream(this->share_dir + "/models/gate/model.sdf").rdbuf())), 
+    std::istreambuf_iterator<char>());
+  
+  if (!spawn_model(this->get_node_base_interface(), this->spawner_, xml, pose, "gate", true)) {
+    RCLCPP_ERROR(this->get_logger(), "Failed to spawn gate model");
+    return false;
+  }
+  
+  return true;
 }
 
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  // Create the node 
   auto node = std::make_shared<GatesPublisher>();
   rclcpp::executors::SingleThreadedExecutor exe;
   exe.add_node(node->get_node_base_interface());
@@ -238,4 +240,3 @@ int main(int argc, char * argv[])
   rclcpp::shutdown();
   return 0;
 }
-
