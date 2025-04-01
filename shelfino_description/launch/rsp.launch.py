@@ -25,7 +25,7 @@ def generate_launch_description():
     shelfino_id = LaunchConfiguration('shelfino_id', default='G')
 
     shelfino_name = PythonExpression(["'", 'shelfino', shelfino_id, "'"])
-
+    frame_prefix = PythonExpression(["'", shelfino_name, "/'"])
     xacro_model = os.path.join(
         get_package_share_directory('shelfino_description'),
         'models','shelfino_v1.xacro')
@@ -53,6 +53,7 @@ def generate_launch_description():
             namespace=shelfino_name,
             output='screen',
             parameters=[{'use_sim_time': use_sim_time},
-                        {'robot_description': robot_desc}],
+                        {'robot_description': robot_desc},
+                        {'frame_prefix': frame_prefix}],
         )
     ])

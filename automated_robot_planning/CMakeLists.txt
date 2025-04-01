@@ -17,7 +17,9 @@ find_package(shelfino_description REQUIRED)
 find_package(shelfino_gazebo REQUIRED)
 find_package(shelfino_navigation REQUIRED)
 find_package(map_pkg REQUIRED)
-
+find_package(ros_gz_sim REQUIRED)
+find_package(ros_gz_bridge REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 # Install Python modules
 ament_python_install_package(${PROJECT_NAME})

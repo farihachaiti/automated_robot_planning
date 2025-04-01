@@ -13,6 +13,7 @@ from tf2_ros import Buffer, TransformListener
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from rclpy.duration import Duration
 import numpy as np
+import time
 
 import asyncio
 
@@ -31,7 +32,7 @@ class RobotController(Node):
         for name in robot_names:
             self.robot_data[name] = {
                 # Action client
-                'nav_client': ActionClient(self, NavigateToPose, f'/{name}/navigate_to_pose'),
+                'nav_client': ActionClient(self, NavigateToPose, f'{name}/navigate_to_pose'),
                 'goal_handle': None,
                 
                 # TF
@@ -66,30 +67,29 @@ class RobotController(Node):
         self.robot_data[robot_name]['scan'] = msg
 
     async def send_goal_to_robot(self, robot_name, goal_pose):
-        """Send a navigation goal to a specific robot."""
-        if robot_name not in self.robot_names:
-            self.get_logger().error(f"Unknown robot: {robot_name}")
-            return False
+            """Send navigation goal to a specific robot (returns Future)"""
+            try:
+                # Wait for server with timeout
+                start_time = time.time()
+                while not self.robot_data[robot_name]['nav_client'].wait_for_server(timeout_sec=0.1):
+                    if time.time() - start_time > 5.0:
+                        self.get_logger().error(f"Action server timeout for {robot_name}")
+                        return None
+                    await asyncio.sleep(0.1)
 
-        # Wait for the action server
-        if not await self.robot_data[robot_name]['nav_client'].wait_for_server(timeout_sec=5.0):
-            self.get_logger().error(f"Action server not available for {robot_name}")
-            return False
-
-        goal_msg = NavigateToPose.Goal()
-        goal_msg.pose = goal_pose
-
-        # Send goal and register callback
-        send_goal_future = self.robot_data[robot_name]['nav_client'].send_goal_async(
-            goal_msg,
-            feedback_callback=lambda feedback, n=robot_name: self.feedback_callback(feedback, n)
-        )
-        send_goal_future.add_done_callback(
-            lambda future, n=robot_name: self.goal_response_callback(future, n)
-        )
-
-        self.get_logger().info(f"Sent goal to {robot_name}: {goal_pose.pose.position.x}, {goal_pose.pose.position.y}")
-        return True
+                # Create and send goal
+                goal_msg = NavigateToPose.Goal()
+                goal_msg.pose = goal_pose
+                
+                self.get_logger().info(f"Sending goal to {robot_name}")
+                send_goal_future = self.robot_data[robot_name]['nav_client'].send_goal_async(goal_msg)
+                
+                # Return the result future (proper awaitable)
+                return send_goal_future
+                
+            except Exception as e:
+                self.get_logger().error(f"Error for {robot_name}: {str(e)}")
+                return None
 
     def goal_response_callback(self, future, robot_name):
         goal_handle = future.result()
@@ -140,11 +140,9 @@ class RobotController(Node):
 
 async def main(args=None):
     rclpy.init(args=args)
-
-
+    
     robot_names = ["shelfino0", "shelfino1", "shelfino2"]
     controller = RobotController(robot_names)
-
 
     # Create goal pose
     goal_pose = PoseStamped()
@@ -152,24 +150,34 @@ async def main(args=None):
     goal_pose.header.stamp = controller.get_clock().now().to_msg()
     goal_pose.pose.position.x = 2.0
     goal_pose.pose.position.y = 1.0
-    goal_pose.pose.orientation.w = 1.0  # No rotation
-
-
+    goal_pose.pose.orientation.w = 1.0
 
     try:
-        # Send goals concurrently
-        await asyncio.gather(
-            *[controller.send_goal_to_robot(name, goal_pose) for name in controller.robot_names]
+        # Get list of goal futures
+        goal_futures = await asyncio.gather(
+            *[controller.send_goal_to_robot(name, goal_pose) 
+              for name in controller.robot_names]
         )
         
-        # Keep node alive
-        while rclpy.ok():
-            await asyncio.sleep(1)
+        # Filter out None results (failed connections)
+        valid_futures = [f for f in goal_futures if f is not None]
+        
+        # Wait for all goals to be accepted
+        goal_handles = await asyncio.gather(*valid_futures)
+        
+        # Now wait for all results
+        result_futures = [h.get_result_async() for h in goal_handles]
+        await asyncio.gather(*result_futures)
+        
     except KeyboardInterrupt:
         controller.emergency_stop()
+    except Exception as e:
+        controller.get_logger().error(f"Main error: {str(e)}")
     finally:
         controller.destroy_node()
         rclpy.shutdown()
 
+if __name__ == '__main__':
+    asyncio.run(main())
 if __name__ == '__main__':
     asyncio.run(main())

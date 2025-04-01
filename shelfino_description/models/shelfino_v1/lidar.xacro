@@ -35,37 +35,27 @@
 
   <gazebo reference='shelfino${robot_id}/base_laser'>
     <material>Gazebo/Green</material>
-    <sensor name="laser" type="ray">
+    <sensor name="hls_lfcd_lds" type="gpu_lidar">
       <pose> 0 0 0 0 0 0 </pose>
-      <visualize>false</visualize>
-      <update_rate>10</update_rate>
-      <ray>
-        <scan>
-          <horizontal>
-            <samples>360</samples>
-            <min_angle>-3.14</min_angle>
-            <max_angle>3.14</max_angle>
-          </horizontal>
-        </scan>
-        <range>
-          <min>${body_width/sqrt(2)+body_width*0.1}</min>
-          <max>15</max>
-        </range>
-        <noise>
-          <type>gaussian</type>
-          <mean>0.0</mean>
-          <stddev>0.02</stddev>
-        </noise>
-      </ray>
-      <plugin name="laser_controller" filename="libgazebo_ros_ray_sensor.so">
-        <ros>
-          <remapping>~/out:=scan</remapping>
-        </ros>
-        <output_type>sensor_msgs/LaserScan</output_type>
-        <frame_name>shelfino${robot_id}/base_laser</frame_name>
-      </plugin>
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+      <update_rate>5</update_rate>
+      <topic>scan</topic>
+      <gz_frame_id>base_scan</gz_frame_id>
+      <horizontal>
+        <samples>360</samples>
+        <min_angle>-3.14</min_angle>
+        <max_angle>3.14</max_angle>
+      </horizontal>
+      <range>
+        <min>${body_width/sqrt(2)+body_width*0.1}</min>
+        <max>15</max>
+      </range>
+      <noise>
+        <type>gaussian</type>
+        <mean>0.0</mean>
+        <stddev>0.02</stddev>
+      </noise>
     </sensor>
   </gazebo>
-
-
 </robot>

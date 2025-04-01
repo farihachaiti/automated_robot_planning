@@ -11,6 +11,11 @@
   </description>
   <maintainer email="farihaal.ferdous@unitn.it">fariha</maintainer>
   <license>Apache 2.0</license>
+  <depend>ros_gz_bridge</depend>
+  <depend>ros_gz_sim</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
 
   <build_depend>ament_cmake_python</build_depend>
   <build_depend>rclpy</build_depend>

@@ -30,7 +30,7 @@ def generate_launch_description():
 
     # Robot namespace - using proper substitution concatenation
     namespace = LaunchConfiguration('namespace', 
-                                  default=['shelfino', robot_id])
+                                  default=f'shelfino{robot_id}')
 
     # Parameter substitutions
     param_substitutions = {

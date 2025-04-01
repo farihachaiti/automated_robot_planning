@@ -148,7 +148,7 @@ def launch_evacuation_nodes(context):
             remappings=[
                 ('/tf', 'tf'),
                 ('/tf_static', 'tf_static'),
-                ('/navigate_to_pose', f'{shelfino_name}/navigate_to_pose')
+                (f'{shelfino_name}/navigate_to_pose', 'navigate_to_pose') 
             ],
             output='screen',
             emulate_tty=True
@@ -179,7 +179,13 @@ def launch_rsp(context):
 def spawn_shelfini(context):
     nodes = []
     use_sim_time = context.launch_configurations['use_sim_time']
-    
+    gazebo_bridge_plugins_params_file_path = os.path.join(
+    get_package_share_directory('shelfino_description'),
+    'config',
+    'bridge.yaml'
+    )   
+
+
     for shelfino_id in range(int(context.launch_configurations['n_shelfini'])):
         shelfino_name = "shelfino" + str(shelfino_id)
         spawn_node = GroupAction([
@@ -192,9 +198,23 @@ def spawn_shelfini(context):
                     '-robot_namespace', shelfino_name,
                     '-x', str(shelfino_id*2.0-2.0),
                     '-y', str(shelfino_id*2.0-2.0),
-                    '-z', '0.0',
+                    '-z', '0.1',
                     '-Y', '0.0'
-                ]
+                ],
+                output='screen'
+            ),
+
+                 Node(
+                package='ros_gz_bridge',
+                executable='parameter_bridge',
+                arguments=[
+                    f'/{shelfino_name}/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
+                    f'/{shelfino_name}/tf@gtf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
+                    f'/{shelfino_name}/odom@nav_msgs/msg/Odometry@gz.msgs.Odometry'
+                    f'/{shelfino_name}/scan@sensor_msgs/msg/LaserScan@gz.msgs.LaserScan',
+                    '--config', gazebo_bridge_plugins_params_file_path,
+                ],
+                output='screen'
             ),
 
             # Add to spawn_shelfini():
@@ -202,6 +222,17 @@ def spawn_shelfini(context):
                 package='tf2_ros',
                 executable='static_transform_publisher',
                 arguments=['0', '0', '0', '0', '0', '0', 'map', [shelfino_name, '/odom']],
+                namespace=shelfino_name,
+                output='screen'
+            ),
+
+            Node(
+                package='tf2_ros',
+                executable='static_transform_publisher',
+                arguments=['0.1', '0', '0.2', '0', '0', '0',  # x, y, z, roll, pitch, yaw
+                          f'{shelfino_name}/base_link',
+                          f'{shelfino_name}/laser'],
+                output='screen',
                 namespace=shelfino_name
             ),
 
