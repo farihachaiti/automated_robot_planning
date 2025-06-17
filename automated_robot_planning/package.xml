@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>automated_robot_planning</name>
+  <version>1.0.0</version>
+  <description>
+    Package containing the launch files for the different tasks:
+    - Multi-agent path finding: mapf.launch.py 
+    - Victims rescue: victims.launch.py 
+    - Purseur evader: pv.launch.py 
+  </description>
+  <maintainer email="farihaal.ferdous@unitn.it">fariha</maintainer>
+  <license>Apache 2.0</license>
+  <depend>ros_gz_bridge</depend>
+  <depend>ros_gz_sim</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+
+  <build_depend>ament_cmake_python</build_depend>
+  <build_depend>rclpy</build_depend>
+  <build_depend>rclcpp</build_depend>
+
+  <exec_depend>obstacles_msgs</exec_depend>
+  <exec_depend>shelfino_description</exec_depend>
+  <exec_depend>shelfino_gazebo</exec_depend>
+  <exec_depend>shelfino_navigation</exec_depend>
+  <exec_depend>map_pkg</exec_depend>
+  <exec_depend>shelfino_node</exec_depend>
+  
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake_python</build_type>
+  </export>
+</package>

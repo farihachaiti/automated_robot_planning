@@ -1,0 +1,57 @@
+<?xml version='1.0'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- 
+    Macro to add a RealSense T265 camera to the robot
+    Parameters:
+      parent: The link to attach the camera to
+      xyz: Position of the camera relative to parent link
+      rpy: Orientation of the camera relative to parent link (roll, pitch, yaw in radians)
+  -->
+  <xacro:macro name="realsense_t265" params="parent xyz:='0 0 0' rpy:='0 0 0'">
+    
+    <!-- Camera link -->
+    <link name="${parent}_t265_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.05 0.04 0.025"/>
+        </geometry>
+        <material name="black">
+          <color rgba="0.1 0.1 0.1 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.05 0.04 0.025"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="0.055"/>  <!-- Approximate mass of T265 in kg -->
+        <inertia ixx="1e-6" ixy="0" ixz="0"
+                 iyy="1e-6" iyz="0"
+                 izz="1e-6"/>
+      </inertial>
+    </link>
+
+    <!-- Fixed joint to parent -->
+    <joint name="${parent}_to_t265" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${parent}_t265_link"/>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+    </joint>
+
+    <!-- Pose frame for tracking -->
+    <link name="${parent}_t265_pose_frame"/>
+    <joint name="${parent}_t265_pose_joint" type="fixed">
+      <parent link="${parent}_t265_link"/>
+      <child link="${parent}_t265_pose_frame"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+
+  </xacro:macro>
+
+</robot>
