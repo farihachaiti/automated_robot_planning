@@ -3,6 +3,7 @@
 import os, math
 from pathlib import Path
 import yaml
+import time
 
 from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
@@ -81,13 +82,17 @@ def spawn_borders(context):
         file.write(borders_model)
         path = Path(file.name).resolve()
 
+    # Generate unique timestamp for this spawn session
+    timestamp = int(time.time() * 1000)
+    entity_name = f"borders_{timestamp}"
+
     nodes = [
         Node(
             package='ros_gz_sim',
             executable='create',
             arguments=[
                         '-file', PythonExpression(["'", str(path), "'"]),
-                        '-entity', PythonExpression(["'borders1'"]),
+                        '-entity', PythonExpression(["'", entity_name, "'"]),
                         '-x', PythonExpression(["'0.0'"]),
                         '-y', PythonExpression(["'0.0'"]),
                         '-z', PythonExpression(["'0.0'"])

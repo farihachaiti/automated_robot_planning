@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, math
+import os, math, time
 from pathlib import Path
 import yaml
 
@@ -89,13 +89,17 @@ def spawn_borders(context):
     with open(temp_sdf_path, 'w') as file:
         file.write(borders_model)
 
+    # Generate unique timestamp for this spawn session
+    timestamp = int(time.time() * 1000)
+    entity_name = f"borders_{timestamp}"
+
     nodes = [
         Node(
             package='ros_gz_sim',
             executable='create',
             arguments=[
                 '-file', temp_sdf_path,
-                '-entity', 'borders',
+                '-entity', entity_name,
                 '-x', '0.0',
                 '-y', '0.0',
                 '-z', '0.0',

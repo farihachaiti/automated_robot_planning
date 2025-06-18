@@ -45,24 +45,12 @@ class QoSBridge(Node):
             self.odom_callback,
             sub_qos
         )
-        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
     def scan_callback(self, msg):
         self.scan_publisher.publish(msg)        
 
-
     def odom_callback(self, msg):
         self.odom_publisher.publish(msg)
-        t = TransformStamped()
-        t.header = msg.header
-        t.child_frame_id = msg.child_frame_id
-        t.header.frame_id = msg.header.frame_id
-        # Copy pose
-        t.transform.translation.x = msg.pose.pose.position.x
-        t.transform.translation.y = msg.pose.pose.position.y
-        t.transform.translation.z = msg.pose.pose.position.z
-        t.transform.rotation = msg.pose.pose.orientation
-        self.tf_broadcaster.sendTransform(t)
 
 def main(args=None):
     rclpy.init(args=args)

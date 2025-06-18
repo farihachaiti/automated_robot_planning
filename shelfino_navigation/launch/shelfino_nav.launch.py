@@ -241,9 +241,30 @@ def generate_launch_description():
             arguments=['--ros-args', '--log-level', 'info'],
             remappings=[
                 ('cmd_vel', 'cmd_vel_nav'),
-                ('map', '/map'),  # Map service in global namespace
-                ('/scan', 'scan'),  # Remove leading slash for proper namespacing
-                ('/odom', 'odom'),
+                (
+                    PathJoinSubstitution([
+                        '/', namespace, 'map'
+                      ]),
+                    PathJoinSubstitution([
+                        '/', 'map'
+                      ]),
+                ),
+                       (
+                    PathJoinSubstitution([
+                        '/', 'odom'
+                      ]),
+                    PathJoinSubstitution([
+                        '/', namespace, 'odom'
+                      ]),
+                ),
+                       (
+                    PathJoinSubstitution([
+                        '/', 'scan'
+                      ]),
+                    PathJoinSubstitution([
+                        '/', namespace, 'scan'
+                      ]),
+                ),
             ],
         ),
 

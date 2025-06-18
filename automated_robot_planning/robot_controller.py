@@ -30,11 +30,10 @@ class RobotController(Node):
         self.robot_name = self.robot_name.strip().rstrip('/')
         
         # Scan monitoring
-        self.last_scan_time = None
+    
         self._amcl_pose = None
         self._last_amcl_update = None
-        self.scan_timeout = 1.0  # seconds
-        self.scan_timer = self.create_timer(0.5, self._check_scan_timeout)  # Check every 500ms
+
 
         # QoS profiles
         self.qos_laser = QoSProfile(history=1, depth=10, reliability=ReliabilityPolicy.BEST_EFFORT, durability=DurabilityPolicy.VOLATILE)
@@ -49,13 +48,7 @@ class RobotController(Node):
             liveliness_lease_duration=Duration()
         )
         
-        # Scan topic subscription
-        self.scan_sub = self.create_subscription(
-            LaserScan,
-            f'{self.robot_name}/scan',
-            self._scan_callback,
-            self.qos_laser
-        )
+
         
         # QoS profile for initial pose subscription (matches RViz2 publisher)
         self.qos_initial_pose = QoSProfile(
@@ -113,8 +106,7 @@ class RobotController(Node):
         # Publishers - use relative topics (no leading slash)
         # The node's namespace will be automatically prepended
         # Odometry subscriber - using processed odometry from shelfino_node
-        self.odom_sub = self.create_subscription(
-            Odometry, 'odom', self.odom_callback, self.qos_odom_sub)
+
             
         # QoS profile for path publisher (matching RViz2's subscription)
         self.qos_path = QoSProfile(
@@ -161,66 +153,18 @@ class RobotController(Node):
             PoseArray, '/gate_position', self.gate_position_callback, self.gate_qos)
     
         self.current_pose = None
-        self.odom = None
+        
         self.amcl_pose = None
-        self.scan = None
+    
 
         self.gate_positions = None  # Store gate positions
         self.goal_result = None  # Store navigation result
         # Create a timer to publish TF transforms
        
         self.get_logger().info(f'Node name: {self.get_name()}, Namespace: {self.get_namespace()}')
-        self.get_logger().info(f'Subscribed to odom topic: {self.odom_sub.topic_name}')
         self.get_logger().info('Robot controller initialized')
 
-    def lookup_transform(self):
-        """Publish all necessary TF transforms for the robot"""
-        self.get_logger().info('publish_tf called', throttle_duration_sec=1.0)
 
-        try:
-            if self.odom is None:
-                self.get_logger().info('No odometry data available for TF publishing', throttle_duration_sec=5.0)
-                return
-                
-            # Get current time for all transforms
-            self.current_time = self.get_clock().now().to_msg()
-            self.transforms = []
-            
-            try:
-                # Look up the transform from odom to base_link (within namespace)
-                t_odom_base = self.tf_buffer.lookup_transform(
-                    f"{self.robot_name}/odom",
-                    f"{self.robot_name}/base_link",
-                    rclpy.time.Time())  # or rclpy.time.Time(seconds=0)
-                
-                self.transforms.append(t_odom_base)
-                self.get_logger().info(f"TF lookup succeeded: {t_odom_base.header.frame_id} → {t_odom_base.child_frame_id}")
-            except Exception as e:
-                self.get_logger().warn(f"TF lookup failed for {self.robot_name}/odom to {self.robot_name}/base_link: {e}")
-            try:
-                # Look up the transform from odom to base_link (within namespace)
-                t_map_odom = self.tf_buffer.lookup_transform(
-                    "map",
-                    f"{self.robot_name}/odom",
-                    rclpy.time.Time())  # or rclpy.time.Time(seconds=0)
-                
-                self.transforms.append(t_map_odom)
-                self.get_logger().info(f"TF lookup succeeded: {t_map_odom.header.frame_id} → {t_map_odom.child_frame_id}")
-            except Exception as e:
-                self.get_logger().warn(f"TF lookup failed for map to odom: {e}")
-            
-
-            try:
-                self.get_logger().info(f'Publishing {len(self.transforms)} transforms')
-                for i, transform in enumerate(self.transforms):
-                    self.get_logger().info(f'Transform {i}: {transform.header.frame_id} -> {transform.child_frame_id}')
-                self.tf_broadcaster.sendTransform(self.transforms)
-                self.get_logger().info('Successfully published transforms', throttle_duration_sec=1.0)
-            except Exception as e:
-                self.get_logger().error(f'Error publishing transforms: {str(e)}')
-            
-        except Exception as e:
-            self.get_logger().error(f'Error in TF publishing: {str(e)}', throttle_duration_sec=1.0)
 
 
     # Callback methods
@@ -237,21 +181,7 @@ class RobotController(Node):
             f'y={msg.pose.pose.position.y:.2f} in frame {msg.header.frame_id}'
         )
         
-    def odom_callback(self, msg):
-        # Store the odometry message
-        self.odom = msg
-        
-        # Log odometry data at debug level to avoid flooding the console
-        self.get_logger().debug(
-            f'Received odometry: frame_id={msg.header.frame_id}, child_frame_id={msg.child_frame_id}\n'
-            f'Position: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}, z={msg.pose.pose.position.z:.2f}\n'
-            f'Orientation: x={msg.pose.pose.orientation.x:.2f}, y={msg.pose.pose.orientation.y:.2f}, '
-            f'z={msg.pose.pose.orientation.z:.2f}, w={msg.pose.pose.orientation.w:.2f}'
-        )
-        
-        # No need to publish TF transform here as it's already published by Gazebo
-        # Just update the lookup transform for other TF frames
-        #self.lookup_transform()
+
 
 
 
@@ -288,9 +218,6 @@ class RobotController(Node):
         except Exception as e:
             self.get_logger().error(f'Error in AMCL callback: {str(e)}')
 
-    def scan_callback(self, msg):
-        """Process incoming laser scan data"""
-        self.scan = msg
         
 
         
@@ -514,32 +441,9 @@ class RobotController(Node):
             executor.shutdown()
             executor.remove_node(self)
             
-    def _scan_callback(self, msg):
-        """Update the last scan timestamp."""
-        self.last_scan_time = self.get_clock().now()
+
         
-    def _check_scan_timeout(self):
-        """Check if scan messages are being received within the timeout period."""
-        if self.last_scan_time is None:
-            # First message not received yet
-            if self.get_clock().now().nanoseconds > 5e9:  # 5 seconds after startup
-                self.get_logger().warn(
-                    f"No scan messages received on {self.robot_name}/scan. "
-                    "Check if the laser scanner is publishing data.",
-                    throttle_duration_sec=10.0  # Only log every 10 seconds to avoid spam
-                )
-            return
-            
-        time_since_last_scan = (self.get_clock().now() - self.last_scan_time).nanoseconds / 1e9
-        
-        if time_since_last_scan > self.scan_timeout:
-            self.get_logger().warn(
-                f"No scan messages received for {time_since_last_scan:.1f} seconds "
-                f"(timeout: {self.scan_timeout}s) on {self.robot_name}/scan. "
-                "Check laser scanner connection and topic remapping.",
-                throttle_duration_sec=5.0  # Only log every 5 seconds to avoid spam
-            )
-        
+
     def get_robot_position(self):
         """
         Get the current 2D position (x, y) of the robot in the map frame.

@@ -362,11 +362,11 @@ def spawn_shelfini(context):
                     f'/{shelfino_name}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
                     f'/{shelfino_name}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
                     f'/{shelfino_name}/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model',
-                    f'/{shelfino_name}/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
-                    f'/{shelfino_name}/tf_static@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
-                    '--ros-args',
-                    '-p',
-                    f'config_file:={os.path.join(get_package_share_directory("shelfino_description"), "config", "bridge.yaml")}',
+                    '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+                    '/tf_static@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+                    #'--ros-args',
+                    #'-p',
+                    #f'config_file:={os.path.join(get_package_share_directory("shelfino_description"), "config", "bridge.yaml")}',
                 ],
                 output='screen',
                 condition=launch.conditions.IfCondition(LaunchConfiguration('use_sim_time'))
@@ -376,7 +376,7 @@ def spawn_shelfini(context):
                 package='tf2_ros',
                 executable='static_transform_publisher',
                 namespace=shelfino_name,
-                arguments=['0', '0', '0', '0', '0', '0', '1', 'map', f'{shelfino_name}/odom'],
+                arguments=['0', '0', '0', '0', '0', '0', 'map', f'{shelfino_name}/odom'],
                 output='screen',
             ),
             # Bridge node is now created separately, not per-robot
@@ -635,6 +635,47 @@ def generate_launch_description():
         condition=launch.conditions.IfCondition(LaunchConfiguration('use_sim_time'))
     )
 
+    # Add a world reset action to clear existing entities before spawning new ones
+    world_reset_action = ExecuteProcess(
+        cmd=['ros2', 'service', 'call', '/world/hexagon/reset', 'gz.msgs.Empty'],
+        output='screen',
+        condition=launch.conditions.IfCondition(LaunchConfiguration('use_sim_time'))
+    )
+
+    # Add a more comprehensive world clearing action
+    def clear_world_entities(context):
+        try:
+            # Clear all entities except the basic world elements
+            entities_to_remove = [
+                'borders', 'gate', 'box', 'cylinder', 'shelfino0', 'shelfino1', 'shelfino2',
+                'ground_plane', 'sun'  # Remove these if they exist as duplicates
+            ]
+            
+            for entity in entities_to_remove:
+                try:
+                    subprocess.run([
+                        'ros2', 'service', 'call', '/world/hexagon/remove', 
+                        'gz.msgs.Entity', '--ros-args', '-p', f'name:={entity}'
+                    ], capture_output=True, timeout=5)
+                    logging.info(f"Attempted to remove entity: {entity}")
+                except subprocess.TimeoutExpired:
+                    logging.warning(f"Timeout removing entity: {entity}")
+                except Exception as e:
+                    logging.debug(f"Entity {entity} may not exist or already removed: {e}")
+            
+            # Also try to remove any entities with timestamp-based names
+            try:
+                subprocess.run([
+                    'ros2', 'service', 'call', '/world/hexagon/reset', 'gz.msgs.Empty'
+                ], capture_output=True, timeout=5)
+                logging.info("World reset completed")
+            except Exception as e:
+                logging.warning(f"World reset failed: {e}")
+                
+        except Exception as e:
+            logging.warning(f"Failed to clear world entities: {e}")
+        return []
+
     # Configure map environment parameters
     map_env_conf_params = RewrittenYaml(
         source_file=map_env_params_file,
@@ -736,8 +777,7 @@ def generate_launch_description():
         }]
     )
 
-
-    # Add lifecycle node activation commands with retry mechanism
+    # Add lifecycle node activation commands with improved logic
     def configure_borders(context):
         try:
             # First check if node exists
@@ -847,7 +887,7 @@ def generate_launch_description():
                 logging.warning(f"send_gates node in unexpected state: {current_state}")
                 return None
         except subprocess.CalledProcessError as e:
-            logging.warning(f"Failed to configure send_borders node, will retry: {e}")
+            logging.warning(f"Failed to configure send_gates node, will retry: {e}")
             return None
         return []
 
@@ -897,46 +937,31 @@ def generate_launch_description():
     ld.add_action(TimerAction(period=10.0, actions=[gazebo_launch]))
     # Add the bridge node (only once, not per-robot)
     ld.add_action(TimerAction(period=14.0, actions=[bridge_node]))
-    ld.add_action(TimerAction(period=15.0, actions=[generate_config_node]))
+    ld.add_action(TimerAction(period=15.0, actions=[world_reset_action]))
+    ld.add_action(TimerAction(period=16.0, actions=[OpaqueFunction(function=clear_world_entities)]))
+    ld.add_action(TimerAction(period=17.0, actions=[generate_config_node]))
     # 2. Wait for Gazebo to be fully loaded before starting map package
     
-        # 3. Configure and activate lifecycle nodes with proper delays and retries
-    # Add multiple attempts for each transition with increasing delays
+    # 3. Configure and activate lifecycle nodes with single attempts and proper delays
+    # Single attempt for each transition with proper delays
     ld.add_action(TimerAction(period=25.0, actions=[OpaqueFunction(function=configure_borders)]))
-    ld.add_action(TimerAction(period=30.0, actions=[OpaqueFunction(function=configure_borders)]))
-    ld.add_action(TimerAction(period=35.0, actions=[OpaqueFunction(function=configure_borders)]))
+    ld.add_action(TimerAction(period=35.0, actions=[OpaqueFunction(function=activate_borders)]))
     
-    ld.add_action(TimerAction(period=40.0, actions=[OpaqueFunction(function=activate_borders)]))
-    ld.add_action(TimerAction(period=45.0, actions=[OpaqueFunction(function=activate_borders)]))
-    ld.add_action(TimerAction(period=50.0, actions=[OpaqueFunction(function=activate_borders)]))
+    ld.add_action(TimerAction(period=45.0, actions=[OpaqueFunction(function=configure_obstacles)]))
+    ld.add_action(TimerAction(period=55.0, actions=[OpaqueFunction(function=activate_obstacles)]))
     
-    ld.add_action(TimerAction(period=55.0, actions=[OpaqueFunction(function=configure_obstacles)]))
-    ld.add_action(TimerAction(period=60.0, actions=[OpaqueFunction(function=configure_obstacles)]))
-    ld.add_action(TimerAction(period=65.0, actions=[OpaqueFunction(function=configure_obstacles)]))
+    ld.add_action(TimerAction(period=65.0, actions=[OpaqueFunction(function=configure_gates)]))
+    ld.add_action(TimerAction(period=75.0, actions=[OpaqueFunction(function=activate_gates)]))
     
-    ld.add_action(TimerAction(period=70.0, actions=[OpaqueFunction(function=activate_obstacles)]))
-    ld.add_action(TimerAction(period=75.0, actions=[OpaqueFunction(function=activate_obstacles)]))
-    ld.add_action(TimerAction(period=80.0, actions=[OpaqueFunction(function=activate_obstacles)]))
+    ld.add_action(TimerAction(period=85.0, actions=[map_pkg_node]))
+    ld.add_action(TimerAction(period=90.0, actions=[create_map_node]))
     
-    ld.add_action(TimerAction(period=85.0, actions=[OpaqueFunction(function=configure_gates)]))
-    ld.add_action(TimerAction(period=90.0, actions=[OpaqueFunction(function=configure_gates)]))
-    ld.add_action(TimerAction(period=95.0, actions=[OpaqueFunction(function=configure_gates)]))
-    
-    ld.add_action(TimerAction(period=100.0, actions=[OpaqueFunction(function=activate_gates)]))
-    ld.add_action(TimerAction(period=105.0, actions=[OpaqueFunction(function=activate_gates)]))
-    ld.add_action(TimerAction(period=110.0, actions=[OpaqueFunction(function=activate_gates)]))
-    
-    ld.add_action(TimerAction(period=112.0, actions=[map_pkg_node]))
-    ld.add_action(TimerAction(period=115.0, actions=[create_map_node]))
-    
-    # Add multiple checks with increasing delays to ensure map is created
-    ld.add_action(TimerAction(period=120.0, actions=[OpaqueFunction(function=check_map_exists)]))
-    ld.add_action(TimerAction(period=125.0, actions=[OpaqueFunction(function=check_map_exists)]))
-    ld.add_action(TimerAction(period=130.0, actions=[OpaqueFunction(function=check_map_exists)]))
+    # Add single check to ensure map is created
+    ld.add_action(TimerAction(period=100.0, actions=[OpaqueFunction(function=check_map_exists)]))
     
 
-    ld.add_action(TimerAction(period=132.0, actions=[map_server_node]))
-    ld.add_action(TimerAction(period=135.0, actions=[map_server_lifecycle_manager]))
+    ld.add_action(TimerAction(period=105.0, actions=[map_server_node]))
+    ld.add_action(TimerAction(period=110.0, actions=[map_server_lifecycle_manager]))
 
 
 
@@ -945,7 +970,7 @@ def generate_launch_description():
     #ld.add_action(TimerAction(period=145.0, actions=[OpaqueFunction(function=launch_rsp)]))
     
     # Spawn robots with navigation and controller included
-    # Slightly delayed to ensure RSP is up
-    ld.add_action(TimerAction(period=150.0, actions=[OpaqueFunction(function=spawn_shelfini)]))
+    # Increased delay to ensure world reset and map spawning are complete
+    ld.add_action(TimerAction(period=130.0, actions=[OpaqueFunction(function=spawn_shelfini)]))
     
     return ld

@@ -6,6 +6,7 @@
     <scene>
       <ambient>0.6 0.6 0.6 1.0</ambient>
       <background>0.2 0.2 0.2 1.0</background>
+      <shadows>false</shadows>
     </scene>
 
     <gui fullscreen='0'>

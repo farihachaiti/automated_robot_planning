@@ -131,8 +131,6 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 
 controller_server:
   ros__parameters:
-    global_frame: map
-    robot_base_frame: base_link
     use_sim_time: True
     controller_frequency: 20.0
     min_x_velocity_threshold: 0.05  # Increased from 0.001
@@ -155,6 +153,28 @@ controller_server:
       yaw_goal_tolerance: 0.25
     # RPP parameters
     FollowPath:
+      critics: ["GoalDist", "PathDist", "PathAlign", "Oscillation", "ObstacleFootprint", "PreferForward"]
+      GoalDist:
+        enabled: true
+        scale: 1.0
+      PathDist:
+        enabled: true
+        scale: 1.0
+      PathAlign:
+        enabled: true
+        scale: 1.0
+      Oscillation:
+        enabled: true
+        scale: 1.0
+      ObstacleFootprint:
+        enabled: true
+        scale: 5.0  # Increased from 1.0 to give more weight to obstacle avoidance
+        max_obstacle_height: 2.0
+        inflation_radius: 0.4
+        cost_scaling_factor: 10.0
+      PreferForward:
+        enabled: true
+        scale: 0.5  # Reduced from 1.0 to reduce preference for forward motion when obstacles are present
       plugin: "dwb_core::DWBLocalPlanner"
       max_vel_x: 0.26      # Match your robot's specs
       min_vel_x: -0.1
@@ -181,28 +201,6 @@ controller_server:
       scaling_amplitude: 0.6
       max_scaling_factor: 0.2
       use_interpolation: true
-      critics: ["GoalDist", "PathDist", "PathAlign", "Oscillation", "ObstacleFootprint", "PreferForward"]
-      GoalDist:
-        enabled: true
-        scale: 1.0
-      PathDist:
-        enabled: true
-        scale: 1.0
-      PathAlign:
-        enabled: true
-        scale: 1.0
-      Oscillation:
-        enabled: true
-        scale: 1.0
-      ObstacleFootprint:
-        enabled: true
-        scale: 5.0  # Increased from 1.0 to give more weight to obstacle avoidance
-        max_obstacle_height: 2.0
-        inflation_radius: 0.4
-        cost_scaling_factor: 10.0
-      PreferForward:
-        enabled: true
-        scale: 0.5  # Reduced from 1.0 to reduce preference for forward motion when obstacles are present
       DWBLocalPlanner:
         max_vel_x: 0.5      # Match your robot's specs
         min_vel_x: -0.1     # Allow reversing
@@ -213,7 +211,7 @@ global_costmap:
   global_costmap:
     ros__parameters:
       use_sim_time: True
-      global_frame: map
+      map_topic: /map
       robot_base_frame: base_link
       robot_radius: 0.4
       plugins: ["static_layer", "inflation_layer"]

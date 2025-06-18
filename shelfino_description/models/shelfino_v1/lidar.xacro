@@ -35,12 +35,10 @@
 
   <!-- LIDAR sensor using ray sensor type -->
   <gazebo reference='shelfino${robot_id}/base_laser'>
-    <sensor name="hls_lfcd_lds" type="gpu_lidar">
+    <sensor name="lidar" type="gpu_lidar">
       <always_on>true</always_on>
       <visualize>true</visualize>
-      <pose>-0.064 0 0.121 0 0 0</pose>
       <update_rate>5</update_rate>
-      <topic>shelfino${robot_id}/scan</topic>
       <gz_frame_id>shelfino${robot_id}/base_laser</gz_frame_id>
       <lidar>
         <scan>
