@@ -30,7 +30,7 @@ amcl:
     sigma_hit: 0.2
     tf_broadcast: true
     publish_tf: true
-    transform_tolerance: 1.0
+    transform_tolerance: 2.0
     update_min_a: 0.2
     update_min_d: 0.25
     z_hit: 0.5
@@ -352,7 +352,7 @@ behavior_server:
       plugin: "nav2_behaviors/Wait"
     global_frame: map
     robot_base_frame: base_link
-    transform_tolerance: 0.1
+    transform_tolerance: 1.0  # Increased from 0.1 to allow more time for transform synchronization
     use_sim_time: True
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0

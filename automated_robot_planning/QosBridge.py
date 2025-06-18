@@ -47,6 +47,7 @@ class QoSBridge(Node):
         )
 
     def scan_callback(self, msg):
+        #msg.header.stamp = this->get_clock()->now();
         self.scan_publisher.publish(msg)        
 
     def odom_callback(self, msg):
