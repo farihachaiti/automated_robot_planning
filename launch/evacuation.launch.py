@@ -273,12 +273,14 @@ def spawn_shelfini(context):
     shelfino_gaze_pkg = get_package_share_directory('shelfino_gazebo')
     shelfino_desc_pkg = get_package_share_directory('shelfino_description')
     shelfino_nav2_pkg = get_package_share_directory('shelfino_navigation')
+    automated_robot_planning_pkg = get_package_share_directory('automated_robot_planning')
     use_sim_time = context.launch_configurations['use_sim_time']
     robot_desc = os.path.join(shelfino_desc_pkg, 'models', 'shelfino_v1.xacro')
     gazebo_world_file = context.launch_configurations['gazebo_world_file']
     map_file_path = os.path.join(shelfino_nav2_pkg, 'maps', 'dynamic_map.yaml')
     nav2_rviz_config_file_path = os.path.join(shelfino_nav2_pkg, 'rviz', 'shelfino_nav.rviz')
     nav2_params_file_path = os.path.join(shelfino_nav2_pkg, 'config', 'shelfino.yaml')
+    tf_config_file_path = os.path.join(automated_robot_planning_pkg, 'tf_config.yaml')
     gazebo_bridge_plugins_params_file_path = os.path.join(
         get_package_share_directory('shelfino_description'),
         'config',
@@ -442,9 +444,10 @@ def spawn_shelfini(context):
                 package='automated_robot_planning',
                 namespace=shelfino_name,
                 executable='QosBridge.py',
-                parameters=[{
-                    'use_sim_time': True
-                }],
+                parameters=[
+                    {'use_sim_time': True},
+                    tf_config_file_path
+                ],
                 output='screen'
             ),
             # Include navigation stack for this robot
@@ -535,9 +538,11 @@ def generate_launch_description():
     shelfino_nav2_pkg = get_package_share_directory('shelfino_navigation')
     shelfino_gaze_pkg = get_package_share_directory('shelfino_gazebo')
     map_env_pkg = get_package_share_directory('map_pkg')
+    
     map_env_params_file_path = os.path.join(map_env_pkg, 'config', 'map_config.yaml')
     nav2_params_file_path = os.path.join(shelfino_nav2_pkg, 'config', 'shelfino.yaml')
     gen_map_params_file_path = os.path.join(map_env_pkg, 'config', 'full_config.yaml')
+   
     qt_qpa_platform = SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb')
     # Add FastDDS configuration to disable SHM transport and fix scan topic issues
     fastdds_config = SetEnvironmentVariable('FASTRTPS_DEFAULT_PROFILES_FILE', 
