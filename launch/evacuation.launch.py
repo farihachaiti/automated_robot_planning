@@ -372,13 +372,13 @@ def spawn_shelfini(context):
                 condition=launch.conditions.IfCondition(LaunchConfiguration('use_sim_time'))
             ),
             
-            Node(
-                package='tf2_ros',
-                executable='static_transform_publisher',
-                namespace=shelfino_name,
-                arguments=['0', '0', '0', '0', '0', '0', 'map', f'{shelfino_name}/odom'],
-                output='screen',
-            ),
+            #Node(
+            #    package='tf2_ros',
+            #    executable='static_transform_publisher',
+            #    namespace=shelfino_name,
+            #    arguments=['0', '0', '0', '0', '0', '0', 'map', f'{shelfino_name}/odom'],
+            #    output='screen',
+            #),
             # Bridge node is now created separately, not per-robot
 
             # Only publish map->odom transform if not in simulation (AMCL will handle it in simulation)
@@ -539,6 +539,9 @@ def generate_launch_description():
     nav2_params_file_path = os.path.join(shelfino_nav2_pkg, 'config', 'shelfino.yaml')
     gen_map_params_file_path = os.path.join(map_env_pkg, 'config', 'full_config.yaml')
     qt_qpa_platform = SetEnvironmentVariable('QT_QPA_PLATFORM', 'xcb')
+    # Add FastDDS configuration to disable SHM transport and fix scan topic issues
+    fastdds_config = SetEnvironmentVariable('FASTRTPS_DEFAULT_PROFILES_FILE', 
+                                          os.path.join(os.getcwd(), 'fastdds_no_shm.xml'))
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
     n_shelfini = LaunchConfiguration('n_shelfini', default='3')
     map_file_path = os.path.join(shelfino_nav2_pkg, 'maps', 'dynamic_map.yaml')
@@ -923,6 +926,7 @@ def generate_launch_description():
     # Launch sequence with retry mechanism
     ld = LaunchDescription()
     ld.add_action(qt_qpa_platform)
+    ld.add_action(fastdds_config)
     for launch_arg in launch_args:
         ld.add_action(launch_arg)
 

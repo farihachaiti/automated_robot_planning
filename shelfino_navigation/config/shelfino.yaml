@@ -269,6 +269,7 @@ local_costmap:
           observation_persistence: 0.0  # 0.0 = only current scan (no persistence)
           inf_is_valid: false     # Treat infinite range readings as free space
           expected_update_rate: 2.0  # Increased from 1.0 to be more lenient with scan updates
+          reliability: best_effort
       always_send_full_costmap: True
 
 map_server:

@@ -257,9 +257,9 @@ def generate_launch_description():
                         '/', namespace, 'odom'
                       ]),
                 ),
-                       (
+                    (
                     PathJoinSubstitution([
-                        '/', 'scan'
+                        '/', namespace, 'local_costmap', namespace, 'scan'
                       ]),
                     PathJoinSubstitution([
                         '/', namespace, 'scan'

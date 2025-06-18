@@ -39,6 +39,7 @@
       <always_on>true</always_on>
       <visualize>true</visualize>
       <update_rate>5</update_rate>
+      <topic>shelfino${robot_id}/scan</topic>
       <gz_frame_id>shelfino${robot_id}/base_laser</gz_frame_id>
       <lidar>
         <scan>
