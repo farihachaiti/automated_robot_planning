@@ -56,6 +56,7 @@ def generate_launch_description():
     # Launch configurations
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
     robot_id = LaunchConfiguration('robot_id', default='0')
+    robot_name = f'shelfino{robot_id}'
     map_file = LaunchConfiguration('map_file', 
         default=os.path.join(shelfino_nav2_pkg, 'maps', 'dynamic_map.yaml'))
     nav2_params_file = LaunchConfiguration('nav2_params_file', default=os.path.join(shelfino_nav2_pkg,'config', 'shelfino.yaml'))
@@ -67,7 +68,7 @@ def generate_launch_description():
     set_initial_pose   = LaunchConfiguration('set_initial_pose', default='true')
     # Robot namespace - using proper substitution concatenation
     namespace = LaunchConfiguration('namespace', 
-                                  default=f'shelfino{robot_id}')
+                                  default=robot_name)
     param_substitutions = { 
         'use_sim_time'     : use_sim_time,
         'autostart'        : 'true',
