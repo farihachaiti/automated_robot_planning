@@ -156,7 +156,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'namespace',
-            default_value=['shelfino', robot_id],
+            default_value=robot_name,
             description='Robot namespace'),
 
         DeclareLaunchArgument(

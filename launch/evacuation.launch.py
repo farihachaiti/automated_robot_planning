@@ -321,7 +321,7 @@ def spawn_shelfini(context):
     
     # Create nodes with the generated positions
     for shelfino_id in range(int(context.launch_configurations['n_shelfini'])):
-        shelfino_name = "shelfino" + str(shelfino_id)
+        shelfino_name = f'shelfino{shelfino_id}' #"shelfino" + str(shelfino_id)
         x_pos, y_pos, yaw_pos = robot_positions[shelfino_id]
         print(f"{shelfino_name} position: x={x_pos:.2f}, y={y_pos:.2f}, yaw={yaw_pos:.2f}")
     
@@ -446,6 +446,9 @@ def spawn_shelfini(context):
                 executable='QosBridge.py',
                 parameters=[
                     {'use_sim_time': True},
+                    {'initial_x': x_pos},
+                    {'initial_y': y_pos},
+                    {'initial_yaw': yaw_pos},
                     tf_config_file_path
                 ],
                 output='screen'
@@ -474,53 +477,43 @@ def spawn_shelfini(context):
      
 
 
-            TimerAction(
-                period=5.0,  # delay per robot
-                actions=[
-                    Node(
-                        package='automated_robot_planning',
-                        executable='robot_controller.py',
-                        name='robot_controller',
-                        namespace=shelfino_name,
-                        parameters=[
-                            {'robot_name': shelfino_name},
-                            {'use_sim_time': True},
-                            {'robot_description': Command([
-                                'xacro ', robot_desc,
-                                ' robot_id:=', str(shelfino_id)
-                            ])},
-                            nav2_params_file
-                        ],
-                        remappings=[
-                            ('/tf', '/tf'),
-                            ('/tf_static', '/tf_static'),
-                            ('/navigate_through_poses', 'navigate_through_poses'),
-                            ('amcl_pose', 'amcl_pose'),
-                            ('cmd_vel', 'cmd_vel'),
-                        ],
-                        output='screen',
-                        emulate_tty=True,
-                        condition=launch.conditions.IfCondition(use_sim_time)
-                    )
-                ]
-            ),
+                Node(
+                    package='automated_robot_planning',
+                    executable='robot_controller.py',
+                    name='robot_controller',
+                    namespace=shelfino_name,
+                    parameters=[
+                        {'robot_name': shelfino_name},
+                        {'use_sim_time': True},
+                        {'robot_description': Command([
+                            'xacro ', robot_desc,
+                            ' robot_id:=', str(shelfino_id)
+                        ])},
+                        nav2_params_file
+                    ],
+                    remappings=[
+                        ('/tf', '/tf'),
+                        ('/tf_static', '/tf_static'),
+                        ('navigate_to_pose', 'navigate_to_pose'),
+                        ('amcl_pose', 'amcl_pose'),
+                        ('cmd_vel', 'cmd_vel'),
+                    ],
+                    output='screen',
+                    emulate_tty=True,
+                    condition=launch.conditions.IfCondition(use_sim_time)
+                ),
 
-            TimerAction(
-                period=10.0,  # delay per robot
-                actions=[
-                    Node(
-                        package='shelfino_gazebo',
-                        executable='destroy_shelfino',
-                        name='destroy_shelfino',
-                        namespace=shelfino_name,
-                        output='screen',
-                        parameters=[{
-                            'use_sim_time': True
-                        }],
-                        condition=launch.conditions.IfCondition(use_sim_time)
-                    )
-                ]
-            ),
+                Node(
+                    package='shelfino_gazebo',
+                    executable='destroy_shelfino',
+                    name='destroy_shelfino',
+                    namespace=shelfino_name,
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True
+                    }],
+                    condition=launch.conditions.IfCondition(use_sim_time)
+                ),
 
        
             ])
@@ -931,7 +924,7 @@ def generate_launch_description():
     # Launch sequence with retry mechanism
     ld = LaunchDescription()
     ld.add_action(qt_qpa_platform)
-    ld.add_action(fastdds_config)
+    #ld.add_action(fastdds_config)
     for launch_arg in launch_args:
         ld.add_action(launch_arg)
 
@@ -946,7 +939,7 @@ def generate_launch_description():
     ld.add_action(TimerAction(period=10.0, actions=[gazebo_launch]))
     # Add the bridge node (only once, not per-robot)
     ld.add_action(TimerAction(period=14.0, actions=[bridge_node]))
-    ld.add_action(TimerAction(period=15.0, actions=[world_reset_action]))
+    #ld.add_action(TimerAction(period=15.0, actions=[world_reset_action]))
     ld.add_action(TimerAction(period=16.0, actions=[OpaqueFunction(function=clear_world_entities)]))
     ld.add_action(TimerAction(period=17.0, actions=[generate_config_node]))
     # 2. Wait for Gazebo to be fully loaded before starting map package

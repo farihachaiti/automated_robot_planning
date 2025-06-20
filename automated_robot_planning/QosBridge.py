@@ -11,6 +11,7 @@ import math
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
 from rclpy.clock import ClockType
 import time
+from geometry_msgs.msg import PoseWithCovarianceStamped
 
 class QoSBridge(Node):
     def __init__(self, namespace=''):
@@ -23,11 +24,19 @@ class QoSBridge(Node):
         self.declare_parameter('tf_tolerance', 0.1)  # 100ms tolerance
         self.declare_parameter('enable_timestamp_validation', True)
         self.declare_parameter('enable_timestamp_correction', True)
+        # Declare initial pose parameters
+        self.declare_parameter('initial_x', 0.0)
+        self.declare_parameter('initial_y', 0.0)
+        self.declare_parameter('initial_yaw', 0.0)
         
         # Get parameters
         self.tf_tolerance = self.get_parameter('tf_tolerance').value
         self.enable_timestamp_validation = self.get_parameter('enable_timestamp_validation').value
         self.enable_timestamp_correction = self.get_parameter('enable_timestamp_correction').value
+        # Get initial pose parameters
+        self.initial_x = self.get_parameter('initial_x').value
+        self.initial_y = self.get_parameter('initial_y').value
+        self.initial_yaw = self.get_parameter('initial_yaw').value
         
         # QoS for subscriber (match source)
         sub_qos = QoSProfile(
@@ -94,6 +103,10 @@ class QoSBridge(Node):
             self.tf_static_callback,
             tf_sub_qos
         )
+
+        # Publisher for initialpose
+        self.initialpose_publisher = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
+        self.publish_initial_pose()
 
         self.get_logger().info(f'QoS Bridge initialized with TF timing validation (tolerance: {self.tf_tolerance}s)')
         self.get_logger().info(f'Timestamp validation: {self.enable_timestamp_validation}, Timestamp correction: {self.enable_timestamp_correction}')
@@ -202,6 +215,29 @@ class QoSBridge(Node):
                 
         except Exception as e:
             self.get_logger().error(f'Error in static TF callback: {str(e)}')
+
+    def publish_initial_pose(self):
+        msg = PoseWithCovarianceStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        msg.pose.pose.position.x = float(self.initial_x)
+        msg.pose.pose.position.y = float(self.initial_y)
+        msg.pose.pose.position.z = 0.0
+        # Convert yaw to quaternion
+        yaw = float(self.initial_yaw)
+        qz = math.sin(yaw * 0.5)
+        qw = math.cos(yaw * 0.5)
+        msg.pose.pose.orientation.x = 0.0
+        msg.pose.pose.orientation.y = 0.0
+        msg.pose.pose.orientation.z = qz
+        msg.pose.pose.orientation.w = qw
+        # Set covariance (default values)
+        msg.pose.covariance = [0.0]*36
+        msg.pose.covariance[0] = 0.25  # x
+        msg.pose.covariance[7] = 0.25  # y
+        msg.pose.covariance[35] = 0.06853891945200942  # yaw
+        self.initialpose_publisher.publish(msg)
+        self.get_logger().info(f'Published initialpose: x={self.initial_x}, y={self.initial_y}, yaw={self.initial_yaw}')
 
 def main(args=None):
     rclpy.init(args=args)

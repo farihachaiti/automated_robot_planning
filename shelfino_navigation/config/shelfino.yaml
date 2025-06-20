@@ -20,8 +20,8 @@ amcl:
     laser_min_range: -1.0
     laser_model_type: likelihood_field
     max_beams: 60
-    max_particles: 2000
-    min_particles: 500
+    max_particles: 3000
+    min_particles: 800
     pf_err: 0.05
     pf_z: 0.99
     resample_interval: 1
@@ -30,7 +30,7 @@ amcl:
     sigma_hit: 0.2
     tf_broadcast: true
     publish_tf: true
-    transform_tolerance: 2.0
+    transform_tolerance: 3.0
     update_min_a: 0.2
     update_min_d: 0.25
     z_hit: 0.5
@@ -176,25 +176,25 @@ controller_server:
         enabled: true
         scale: 0.5  # Reduced from 1.0 to reduce preference for forward motion when obstacles are present
       plugin: "dwb_core::DWBLocalPlanner"
-      max_vel_x: 0.26      # Match your robot's specs
-      min_vel_x: -0.1
-      acc_lim_x: 2.5       # Must match your robot's capabilities
-      acc_lim_theta: 3.2
-      vx_samples: 30
+      max_vel_x: 0.18
+      min_vel_x: -0.08
+      acc_lim_x: 0.8
+      acc_lim_theta: 1.5
+      vx_samples: 50
       vy_samples: 0        # For differential drive
-      vtheta_samples: 50
+      vtheta_samples: 80
       sim_time: 2.0        # Increased from 1.0
-      path_distance_bias: 0.5
-      goal_distance_bias: 1.0
-      occdist_scale: 0.3    # Increased from 0.1 to make the robot more cautious around obstacles
-      max_vel_x: 0.2        # Reduced from 0.26 to allow better reaction time
-      min_vel_x: -0.1
-      acc_lim_x: 1.0        # Reduced from 2.5 to make acceleration/braking smoother
-      acc_lim_theta: 2.0    # Reduced from 3.2 to make rotation smoother
-      vx_samples: 40         # Increased from 30 for better trajectory sampling
-      vtheta_samples: 60     # Increased from 50 for better rotation sampling
-      prune_plan: true       # Enable plan pruning to remove unnecessary waypoints
-      prune_distance: 0.5    # Prune waypoints closer than this distance
+      path_distance_bias: 0.3
+      goal_distance_bias: 1.2
+      occdist_scale: 0.6
+      max_vel_x: 0.18
+      min_vel_x: -0.08
+      acc_lim_x: 0.8
+      acc_lim_theta: 1.5
+      vx_samples: 50
+      vtheta_samples: 80
+      prune_plan: true
+      prune_distance: 0.7
       max_obstacle_height: 2.0  # Ensure we're checking for obstacles up to 2m high
       forward_point_distance: 0.1
       stop_time_buffer: 0.2
@@ -221,8 +221,8 @@ global_costmap:
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.5
+        cost_scaling_factor: 4.0
+        inflation_radius: 0.8
       always_send_full_costmap: True
 
 
@@ -240,13 +240,13 @@ local_costmap:
       width: 5
       height: 5
       resolution: 0.05
-      robot_radius: 0.25
+      robot_radius: 0.5
       transform_tolerance: 2.0
       plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 1.0
+        cost_scaling_factor: 5.0
+        inflation_radius: 1.2
         inflate_unknown: false    # Don't inflate unknown space
         inflate_around_unknown: false  # Don't inflate around unknown space
       obstacle_layer:
@@ -262,10 +262,10 @@ local_costmap:
           max_obstacle_height: 2.0  # Match the max_obstacle_height
           clearing: True
           marking: True
-          raytrace_max_range: 5.0  # Increased to clear more space in the costmap (map is 20m wide)
+          raytrace_max_range: 6.0
           raytrace_min_range: 0.0
-          obstacle_max_range: 4.0  # Increased to detect obstacles further away
-          obstacle_min_range: 0.2  # Increased to avoid sensor noise and very close obstacles
+          obstacle_max_range: 5.0
+          obstacle_min_range: 0.25
           observation_persistence: 0.0  # 0.0 = only current scan (no persistence)
           inf_is_valid: false     # Treat infinite range readings as free space
           expected_update_rate: 2.0  # Increased from 1.0 to be more lenient with scan updates
@@ -340,7 +340,7 @@ behavior_server:
   ros__parameters:
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
-    cycle_frequency: 10.0
+    cycle_frequency: 15.0
     behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
     spin:
       plugin: "nav2_behaviors/Spin"
@@ -352,7 +352,7 @@ behavior_server:
       plugin: "nav2_behaviors/Wait"
     global_frame: map
     robot_base_frame: base_link
-    transform_tolerance: 1.0  # Increased from 0.1 to allow more time for transform synchronization
+    transform_tolerance: 2.0
     use_sim_time: True
     simulate_ahead_time: 2.0
     max_rotational_vel: 1.0
@@ -380,10 +380,10 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.26, 0.0, 1.0]
-    min_velocity: [-0.26, 0.0, -1.0]
-    max_accel: [2.5, 0.0, 3.2]
-    max_decel: [-2.5, 0.0, -3.2]
+    max_velocity: [0.18, 0.0, 0.8]
+    min_velocity: [-0.18, 0.0, -0.8]
+    max_accel: [0.8, 0.0, 1.5]
+    max_decel: [-0.8, 0.0, -1.5]
     odom_topic: /odom
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
