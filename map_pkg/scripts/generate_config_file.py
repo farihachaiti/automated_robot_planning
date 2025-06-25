@@ -11,13 +11,7 @@ import rclpy
 from rclpy.node import Node
 from ament_index_python.packages import get_package_share_directory
 
-try:
-    from launch.mapscripts.geo_utility import rectangle, circle, square, hexagon, is_in_map_polygons, center
-except Exception as e:
-    import sys
-    sys.path.append(os.path.join(get_package_share_directory('map_pkg'), 'launch', 'mapscripts'))
-    from geo_utility import rectangle, circle, square, hexagon, is_in_map_polygons, center, Polygon
-
+from geo_utility import rectangle, circle, square, hexagon, is_in_map_polygons, center, Polygon
 
 SHELFINO_WIDTH = 0.5
 SHELFINO_LENGTH = 0.4

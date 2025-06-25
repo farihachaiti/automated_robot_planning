@@ -23,8 +23,9 @@ find_package(shelfino_node REQUIRED)
 ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
-  automated_robot_planning/robot_controller.py
-  automated_robot_planning/QosBridge.py
+  ${PROJECT_NAME}/robot_controller.py
+  ${PROJECT_NAME}/QosBridge.py
+  ${PROJECT_NAME}/dubins_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

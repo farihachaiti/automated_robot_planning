@@ -14,7 +14,7 @@
       <max_wheel_acceleration>1.0</max_wheel_acceleration>
       <max_linear_acceleration>0.033</max_linear_acceleration> 
 
-      <topic>shelfino${robot_id}cmd_vel</topic>
+      <topic>shelfino${robot_id}/cmd_vel</topic>
 
       <!-- Output -->
       <odom_topic>shelfino${robot_id}/odom</odom_topic>

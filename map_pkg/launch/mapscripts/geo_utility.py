@@ -24,6 +24,12 @@ def is_in_map_polygons(points1 : Polygon, points2 : Polygon):
     assert points1.is_valid and points2.is_valid
     return points2.contains(points1) and not points1.touches(points2)
 
+
+
+def is_intersecting(polygon1 : Polygon, polygon2 : Polygon):
+    assert polygon1.is_valid and polygon2.is_valid
+    return polygon1.intersects(polygon2)
+
 def gen_hex_points(L, X = 0, Y = 0):
     sqrt3o2 = math.sqrt(3) / 2
 

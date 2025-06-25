@@ -87,22 +87,22 @@ class QoSBridge(Node):
         )
 
         # TF topic bridge
-        self.tf_publisher = self.create_publisher(TFMessage, '/tf', tf_pub_qos)
-        self.tf_subscription = self.create_subscription(
-            TFMessage,
-            '/tf',
-            self.tf_callback,
-            tf_sub_qos
-        )
+        #self.tf_publisher = self.create_publisher(TFMessage, '/tf', tf_pub_qos)
+        #self.tf_subscription = self.create_subscription(
+        #    TFMessage,
+        #    '/tf',
+        #    self.tf_callback,
+        #    tf_sub_qos
+        #)
 
         # TF static topic bridge
-        self.tf_static_publisher = self.create_publisher(TFMessage, '/tf_static', tf_pub_qos)
-        self.tf_static_subscription = self.create_subscription(
-            TFMessage,
-            '/tf_static',
-            self.tf_static_callback,
-            tf_sub_qos
-        )
+        #self.tf_static_publisher = self.create_publisher(TFMessage, '/tf_static', tf_pub_qos)
+        #self.tf_static_subscription = self.create_subscription(
+        #    TFMessage,
+        #    '/tf_static',
+        #    self.tf_static_callback,
+        #    tf_sub_qos
+        #)
 
         # Publisher for initialpose
         self.initialpose_publisher = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
@@ -188,33 +188,33 @@ class QoSBridge(Node):
             self.get_logger().error(f'Error in odom callback: {str(e)}')
 
 
-    def tf_callback(self, msg):
-        """Handle TF messages with timing validation."""
-        try:
-            if not self.validate_tf_timestamp(msg):
-                updated_msg = self.update_tf_timestamps(msg)
-                self.tf_publisher.publish(updated_msg)
-            else:
-                self.tf_publisher.publish(msg)
-                
-        except Exception as e:
-            self.get_logger().error(f'Error in TF callback: {str(e)}')
+    #def tf_callback(self, msg):
+    #    """Handle TF messages with timing validation."""
+    #    try:
+    #        if not self.validate_tf_timestamp(msg):
+    #            updated_msg = self.update_tf_timestamps(msg)
+    #            self.tf_publisher.publish(updated_msg)
+    #        else:
+    #            self.tf_publisher.publish(msg)
+    #            
+    #    except Exception as e:
+    #        self.get_logger().error(f'Error in TF callback: {str(e)}')
 
-    def tf_static_callback(self, msg):
-        """Handle static TF messages with timing validation"""
-        try:
+    #def tf_static_callback(self, msg):
+    #    """Handle static TF messages with timing validation"""
+    #    try:
             # For static transforms, we can be more lenient with timing
             # but still validate to prevent very old data
-            if not self.validate_tf_timestamp(msg):
+    #        if not self.validate_tf_timestamp(msg):
                 # Update timestamps for static transforms too
-                updated_msg = self.update_tf_timestamps(msg)
-                self.tf_static_publisher.publish(updated_msg)
-                self.get_logger().debug('Published static TF with updated timestamps')
-            else:
-                self.tf_static_publisher.publish(msg)
-                
-        except Exception as e:
-            self.get_logger().error(f'Error in static TF callback: {str(e)}')
+    #            updated_msg = self.update_tf_timestamps(msg)
+    #            self.tf_static_publisher.publish(updated_msg)
+    #            self.get_logger().debug('Published static TF with updated timestamps')
+    #        else:
+    #            self.tf_static_publisher.publish(msg)
+    #            
+    #    except Exception as e:
+    #        self.get_logger().error(f'Error in static TF callback: {str(e)}')
 
     def publish_initial_pose(self):
         msg = PoseWithCovarianceStamped()

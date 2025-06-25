@@ -193,6 +193,12 @@ Visualization Manager:
       Update Interval: 0
       Value: true
       Visual Enabled: true
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Path
+      Topic:
+        Value: /shelfinoX/plan1
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

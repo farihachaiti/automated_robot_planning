@@ -3,7 +3,7 @@
   <model name='victim'>
     <link name='link'>
       <inertial>
-        <mass>0</mass>
+        <mass>0.01</mass>
         <inertia>
           <ixx>0.145833</ixx>
           <ixy>0</ixy>

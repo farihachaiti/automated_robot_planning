@@ -280,7 +280,7 @@ def spawn_shelfini(context):
     map_file_path = os.path.join(shelfino_nav2_pkg, 'maps', 'dynamic_map.yaml')
     nav2_rviz_config_file_path = os.path.join(shelfino_nav2_pkg, 'rviz', 'shelfino_nav.rviz')
     nav2_params_file_path = os.path.join(shelfino_nav2_pkg, 'config', 'shelfino.yaml')
-    tf_config_file_path = os.path.join(automated_robot_planning_pkg, 'tf_config.yaml')
+    #tf_config_file_path = os.path.join(automated_robot_planning_pkg, 'tf_config.yaml')
     gazebo_bridge_plugins_params_file_path = os.path.join(
         get_package_share_directory('shelfino_description'),
         'config',
@@ -333,6 +333,20 @@ def spawn_shelfini(context):
         nav2_rviz_config_file = context.launch_configurations['nav2_rviz_config_file']
         
         # Group all actions for this robot
+
+        tf_bridge_node = Node(
+            package='ros_gz_bridge',
+            executable='parameter_bridge',
+            arguments=[
+                '/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
+                '/tf_static@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
+            ],
+            parameters=[{
+            'use_sim_time': True}],
+            output='screen',
+            condition=launch.conditions.IfCondition(LaunchConfiguration('use_sim_time'))
+        )
+        nodes.append(tf_bridge_node)
         spawn_node = GroupAction([
             # Static transform publisher: map -> odom for each robot
    
@@ -364,8 +378,6 @@ def spawn_shelfini(context):
                     f'/{shelfino_name}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
                     f'/{shelfino_name}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
                     f'/{shelfino_name}/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model',
-                    '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
-                    '/tf_static@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
                     #'--ros-args',
                     #'-p',
                     #f'config_file:={os.path.join(get_package_share_directory("shelfino_description"), "config", "bridge.yaml")}',
@@ -449,7 +461,25 @@ def spawn_shelfini(context):
                     {'initial_x': x_pos},
                     {'initial_y': y_pos},
                     {'initial_yaw': yaw_pos},
-                    tf_config_file_path
+                    {'tf_tolerance': 0.1},
+                    {'enable_timestamp_validation': True},
+                    {'enable_timestamp_correction': True},
+                ],
+                output='screen'
+            ),
+
+            Node(
+                package='automated_robot_planning',
+                namespace=shelfino_name,
+                executable='dubins_node.py',
+                parameters=[
+                    {'use_sim_time': True},
+                    {'robot_name': shelfino_name},
+                    {'initial_x': x_pos},
+                    {'initial_y': y_pos},
+                    {'initial_yaw': yaw_pos},
+                    {'turning_radius': 1.0},
+                    {'step_size': 1.0},
                 ],
                 output='screen'
             ),
@@ -477,31 +507,9 @@ def spawn_shelfini(context):
      
 
 
-                Node(
-                    package='automated_robot_planning',
-                    executable='robot_controller.py',
-                    name='robot_controller',
-                    namespace=shelfino_name,
-                    parameters=[
-                        {'robot_name': shelfino_name},
-                        {'use_sim_time': True},
-                        {'robot_description': Command([
-                            'xacro ', robot_desc,
-                            ' robot_id:=', str(shelfino_id)
-                        ])},
-                        nav2_params_file
-                    ],
-                    remappings=[
-                        ('/tf', '/tf'),
-                        ('/tf_static', '/tf_static'),
-                        ('navigate_to_pose', 'navigate_to_pose'),
-                        ('amcl_pose', 'amcl_pose'),
-                        ('cmd_vel', 'cmd_vel'),
-                    ],
-                    output='screen',
-                    emulate_tty=True,
-                    condition=launch.conditions.IfCondition(use_sim_time)
-                ),
+    
+
+          
 
                 Node(
                     package='shelfino_gazebo',

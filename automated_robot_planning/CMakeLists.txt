@@ -28,6 +28,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
 ${PROJECT_NAME}/robot_controller.py
 ${PROJECT_NAME}/QosBridge.py
+${PROJECT_NAME}/dubins_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -35,7 +35,7 @@ def check_exists(context):
     return
 
 def evaluate_rviz(context, *args, **kwargs):
-    rn = 'shelfino' + context.launch_configurations['robot_id']
+    rn = context.launch_configurations['namespace']
     rviz_path = context.launch_configurations['rviz_config_file']
     cr_path = context.launch_configurations['nav2_rviz_config_file']
     
@@ -56,7 +56,7 @@ def generate_launch_description():
     # Launch configurations
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
     robot_id = LaunchConfiguration('robot_id', default='0')
-    robot_name = f'shelfino{robot_id}'
+    namespace = LaunchConfiguration('namespace', default=['shelfino', robot_id])
     map_file = LaunchConfiguration('map_file', 
         default=os.path.join(shelfino_nav2_pkg, 'maps', 'dynamic_map.yaml'))
     nav2_params_file = LaunchConfiguration('nav2_params_file', default=os.path.join(shelfino_nav2_pkg,'config', 'shelfino.yaml'))
@@ -67,8 +67,6 @@ def generate_launch_description():
     initial_yaw = LaunchConfiguration('initial_yaw', default='0.0')
     set_initial_pose   = LaunchConfiguration('set_initial_pose', default='true')
     # Robot namespace - using proper substitution concatenation
-    namespace = LaunchConfiguration('namespace', 
-                                  default=robot_name)
     param_substitutions = { 
         'use_sim_time'     : use_sim_time,
         'autostart'        : 'true',
@@ -87,7 +85,7 @@ def generate_launch_description():
     # Rewrite parameters with namespace
     configured_params = RewrittenYaml(
         source_file=nav2_params_file,
-        root_key=namespace,
+        root_key=['/', namespace],
         param_rewrites=param_substitutions,
         convert_types=True
     )
@@ -156,7 +154,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'namespace',
-            default_value=robot_name,
+            default_value=['shelfino', robot_id],
             description='Robot namespace'),
 
         DeclareLaunchArgument(
