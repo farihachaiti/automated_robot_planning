@@ -162,59 +162,53 @@ def launch_rsp(context):
         )
     return nodes
 
-def is_position_valid(x, y, robot_positions, obstacles, min_robot_distance=1.5, min_obstacle_distance=0.7):
-    """Check if a position is valid considering robots and obstacles."""
+def is_position_valid(x, y, robot_positions, obstacles, map_bounds, robot_radius=0.4, min_robot_distance=0.05, min_obstacle_distance=0.05):
+    """Check if a position is valid considering robots, obstacles, and map bounds."""
+    x_min, x_max, y_min, y_max = map_bounds
+
+    # Check map bounds with margin for robot radius
+    if not (x_min + robot_radius <= x <= x_max - robot_radius and y_min + robot_radius <= y <= y_max - robot_radius):
+        return False
+
     # Check distance from other robots
     for rx, ry, _ in robot_positions:
-        if math.hypot(x - rx, y - ry) < min_robot_distance:
+        dist = ((x - rx)**2 + (y - ry)**2)**0.5
+        if dist < (2 * robot_radius + min_robot_distance):
             return False
-    
+
     # Check distance from obstacles
     for ox, oy, radius in obstacles:
-        if math.hypot(x - ox, y - oy) < (radius + min_obstacle_distance):
+        dist = ((x - ox)**2 + (y - oy)**2)**0.5
+        if dist < (radius + robot_radius + min_obstacle_distance):
             return False
-    
     return True
 
-def generate_robot_positions(n_robots, obstacles, map_bounds, max_attempts=10):
-    """Generate positions for robots that avoid obstacles and other robots.
-    
-    Args:
-        n_robots: Number of robot positions to generate
-        obstacles: List of (x, y, radius) tuples representing obstacles
-        map_bounds: Tuple of (x_min, x_max, y_min, y_max) for the map boundaries
-        max_attempts: Maximum number of attempts to find a valid position for each robot
-        
-    Returns:
-        List of (x, y, yaw) tuples for each robot
-        
-    Raises:
-        RuntimeError: If a valid position cannot be found for a robot after max_attempts
-    """
+def generate_robot_positions(n_robots, obstacles, map_bounds, robot_radius=0.2, min_robot_distance=0.05, min_obstacle_distance=0.05, max_attempts=100):
+    """Generate positions for robots that avoid obstacles, other robots, and map bounds."""
     robot_positions = []
     x_min, x_max, y_min, y_max = map_bounds
-    
+
     for robot_num in range(1, n_robots + 1):
         position_found = False
-        
+
         for attempt in range(max_attempts):
-            x = random.uniform(x_min, x_max)
-            y = random.uniform(y_min, y_max)
+            x = random.uniform(x_min + robot_radius, x_max - robot_radius)
+            y = random.uniform(y_min + robot_radius, y_max - robot_radius)
             yaw = random.uniform(-math.pi, math.pi)
-            
-            if is_position_valid(x, y, robot_positions, obstacles):
+
+            if is_position_valid(x, y, robot_positions, obstacles, map_bounds, robot_radius, min_robot_distance, min_obstacle_distance):
                 robot_positions.append((x, y, yaw))
-                position_found = True
                 logging.info(f"Found position for robot {robot_num} after {attempt + 1} attempts")
+                position_found = True
                 break
-        
+
         if not position_found:
             raise RuntimeError(
                 f"Failed to find valid position for robot {robot_num} after {max_attempts} attempts. "
                 f"Current map bounds: {map_bounds}, existing robots: {len(robot_positions)}, "
                 f"obstacles: {len(obstacles)}"
             )
-    
+
     return robot_positions
 
 def load_obstacles_from_yaml(yaml_path):
@@ -306,7 +300,7 @@ def spawn_shelfini(context):
     # Generate robot positions avoiding obstacles
     n_robots = int(context.launch_configurations['n_shelfini'])
     robot_positions = generate_robot_positions(n_robots, obstacles, map_bounds)
-    
+    flat_robot_positions = [item for sublist in robot_positions for item in sublist]
     logging.info(f"Generated {len(robot_positions)} robot positions")
     for i, (x, y, yaw) in enumerate(robot_positions):
         logging.info(f"Robot {i}: x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
@@ -473,6 +467,7 @@ def spawn_shelfini(context):
                 namespace=shelfino_name,
                 executable='dubins_node.py',
                 parameters=[
+                    {'robot_positions': flat_robot_positions},
                     {'use_sim_time': True},
                     {'robot_name': shelfino_name},
                     {'initial_x': x_pos},
