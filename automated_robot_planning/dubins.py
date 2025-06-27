@@ -130,6 +130,9 @@ class DubinsPath():
         self.obstacles, self.map_bounds = self.load_obstacles_from_yaml(self.yaml_path)
         max_steps = 200  # Safety limit
         steps = 0
+        robot_radius = 0.4
+        min_robot_distance=0.05
+        min_obstacle_distance=0.05
         last_distance = self.get_distance(current_pos, goal)
         while not self.close_enough(current_pos, goal):
             # Update path parameters
@@ -165,15 +168,19 @@ class DubinsPath():
                 # Use the same check_valid logic as in find_valid_position_toward_goal
                 def check_valid(x, y):
                     x_min, x_max, y_min, y_max = self.map_bounds
-                    if not (x_min + 0.4 <= x <= x_max - 0.4 and y_min + 0.4 <= y <= y_max - 0.4):
+                    if not (x_min + robot_radius <= x <= x_max - robot_radius and y_min + robot_radius <= y <= y_max - robot_radius):
                         return False
+
+                    # Check distance from other robots
                     for rx, ry, _ in self.robot_positions:
                         dist = ((x - rx)**2 + (y - ry)**2)**0.5
-                        if dist < (2 * 0.4 + 0.05):
+                        if dist < (2 * robot_radius + min_robot_distance):
                             return False
+
+                    # Check distance from obstacles
                     for ox, oy, radius in self.obstacles:
                         dist = ((x - ox)**2 + (y - oy)**2)**0.5
-                        if dist < (radius + 0.4 + 0.05):
+                        if dist < (radius + robot_radius + min_obstacle_distance):
                             return False
                     return True
                 if check_valid(pt[0], pt[1]):
