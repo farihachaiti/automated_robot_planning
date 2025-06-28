@@ -107,7 +107,9 @@ class DubinsPathPlanner(Node):
 
 
     def try_plan(self):
+        self.get_logger().info('try_plan called')
         if self.start_pose and self.goal_pose:
+            self.get_logger().info('Both start_pose and goal_pose are available')
             # Avoid re-planning if goal is the same
             # This is a simple check; could be more robust
             
@@ -126,11 +128,19 @@ class DubinsPathPlanner(Node):
         y = self.goal_pose.pose.position.y
         theta = self.quaternion_to_yaw(self.goal_pose.pose.orientation)
         goal = (x, y, theta)
+        self.get_logger().info(f'Goal: ({x}, {y}, {theta})')
+        
         # Also convert start_pose to (x, y, theta)
         start = self.pose_to_tuple(self.start_pose.pose)
+        self.get_logger().info(f'Start: {start}')
+        
         # Plan Dubins path
+        self.get_logger().info('Creating DubinsPath object...')
         dubinspath = DubinsPath(start, goal, 1.0, self.robot_positions, self.get_logger())
+        self.get_logger().info('Planning path...')
         path = dubinspath.plan_path(start, goal)
+        self.get_logger().info(f'Path planned with {len(path)} points')
+        
         # Publish the path
         path_msg = Path()
         path_msg.header.frame_id = self.start_pose.header.frame_id
@@ -147,34 +157,16 @@ class DubinsPathPlanner(Node):
             path_msg.poses.append(pose)
         self.path_pub.publish(path_msg)
         self.get_logger().info(f"Published Dubins path with {len(path_msg.poses)} points.")
-        self.get_logger().info(f"Published Dubins path with Pose {idx}: pos=({p.x}, {p.y}, {p.z}), ori=({o.x}, {o.y}, {o.z}, {o.w})")
+        #self.get_logger().info(f"Published Dubins path with Pose {idx}: pos=({p.x}, {p.y}, {p.z}), ori=({o.x}, {o.y}, {o.z}, {o.w})")
         self.path_published_event.set()
         if hasattr(self, 'loop'):
+            self.get_logger().info('Sending path to follow_path action server...')
             asyncio.run_coroutine_threadsafe(self.send_follow_path_goal(path_msg), self.loop)
         else:
             self.get_logger().error('No asyncio event loop found in node.')
        
         self.get_logger().info(f"Path frame_id: {path_msg.header.frame_id}")
-        '''if path_msg.poses:
-            first = path_msg.poses[0].pose
-            last = path_msg.poses[-1].pose
-            self.get_logger().info(f"First pose: ({first.position.x}, {first.position.y}, {first.position.z}), orientation: ({first.orientation.x}, {first.orientation.y}, {first.orientation.z}, {first.orientation.w})")
-            self.get_logger().info(f"Last pose: ({last.position.x}, {last.position.y}, {last.position.z}), orientation: ({last.orientation.x}, {last.orientation.y}, {last.orientation.z}, {last.orientation.w})")
-            # Detailed logging for all poses and NaN/invalid checks
-            for idx, pose_stamped in enumerate(path_msg.poses):
-                p = pose_stamped.pose.position
-                o = pose_stamped.pose.orientation
-                pos_nan = any(math.isnan(v) for v in [p.x, p.y, p.z])
-                ori_nan = any(math.isnan(v) for v in [o.x, o.y, o.z, o.w])
-                ori_zero = (o.x == 0.0 and o.y == 0.0 and o.z == 0.0 and o.w == 0.0)
-                self.get_logger().debug(f"Pose {idx}: pos=({p.x}, {p.y}, {p.z}), ori=({o.x}, {o.y}, {o.z}, {o.w})")
-                self.get_logger().info(f"Published Dubins path with Pose {idx}: pos=({p.x}, {p.y}, {p.z}), ori=({o.x}, {o.y}, {o.z}, {o.w})")
-                if pos_nan or ori_nan:
-                    self.get_logger().warn(f"Pose {idx} contains NaN values: pos_nan={pos_nan}, ori_nan={ori_nan}")
-                if ori_zero:
-                    self.get_logger().warn(f"Pose {idx} orientation is all zeros (invalid quaternion)")
-        else:
-            self.get_logger().warn('Path is empty!')'''
+
         
 
     def pose_to_tuple(self, pose: Pose):
@@ -193,25 +185,19 @@ class DubinsPathPlanner(Node):
         return Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
 
     async def send_follow_path_goal(self, path_msg, max_retries=3):
+        
         # Wait for the action server to be available
-        for attempt in range(max_retries):
-            if self.follow_path_client.wait_for_server(timeout_sec=5.0):
-                break
-            self.get_logger().warn(f'FollowPath action server not available, retrying ({attempt+1}/{max_retries})...')
-            await asyncio.sleep(1.0)
-        else:
-            self.get_logger().error('FollowPath action server not available after retries!')
-            self.navigation_complete.set()
-            return
-
-        for attempt in range(max_retries):
+        if self.follow_path_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().info('Action server is available')
+            #for attempt in range(max_retries):
             goal_msg = FollowPath.Goal()
             goal_msg.path = path_msg
             goal_msg.controller_id = "FollowPath"
             goal_msg.goal_checker_id = "simple_goal_checker"
             goal_msg.progress_checker_id = "simple_progress_checker"
-            self.get_logger().info(f'Sending path to FollowPath action server (attempt {attempt+1})...')
+            
             send_goal_future = self.follow_path_client.send_goal_async(goal_msg)
+            self.get_logger().info('Sending path to FollowPath action server')
             goal_handle = await send_goal_future
 
             if goal_handle.accepted:
@@ -266,9 +252,8 @@ async def ros_spin(node: Node):
     thread.start()
 
     try:
-        await node.goal_set_event.wait()
-        await node.path_published_event.wait()
-        await node.navigation_complete.wait()  # Wait until navigation is complete
+        # Keep spinning until cancelled
+        await fut
     except asyncio.CancelledError:
         cancel.trigger()
     fut.cancel()  # Signal the spinning thread to stop
@@ -283,9 +268,13 @@ async def main():
     # Start spinning in asyncio
     spin_task = asyncio.create_task(ros_spin(node))
 
-    await node.goal_set_event.wait()
-    await node.path_published_event.wait()
-    await node.navigation_complete.wait()
+    # Wait for events after starting the spin task
+    try:
+        await node.goal_set_event.wait()
+        await node.path_published_event.wait()
+        await node.navigation_complete.wait()
+    except asyncio.CancelledError:
+        pass
 
     spin_task.cancel()
     await spin_task

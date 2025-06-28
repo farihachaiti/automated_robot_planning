@@ -699,7 +699,7 @@ def generate_launch_description():
             os.path.join(map_env_pkg, 'launch', 'spawn_map.launch.py')
         ]),
         launch_arguments={
-            'map_env_params_file': map_env_conf_params,
+            'gen_map_params_file': gen_map_params_file,
             'use_sim_time': 'true' 
         }.items()
     )
@@ -717,7 +717,7 @@ def generate_launch_description():
             ),
             'use_sim_time': True
         },
-        map_env_params_file
+        gen_map_params_file_params
         ]
     )
 
@@ -727,17 +727,9 @@ def generate_launch_description():
         executable='generate_config_file.py',
         name='generate_config_file',
         output='screen',
-        parameters=[{
+        parameters= [map_env_params_file] + [{
             'map_env_params_file': map_env_params_file,
-            'gen_map_params_file': os.path.join(
-                get_package_share_directory('map_pkg'),
-                'config',
-                'full_config.yaml'
-            ),
-            'output_dir': os.path.join(
-                get_package_share_directory('map_pkg'),
-                'config'
-            ),
+            'gen_map_params_file': gen_map_params_file,   
             'generate_new_config': True,
             'use_sim_time': True
         }]
@@ -944,7 +936,7 @@ def generate_launch_description():
     ld.add_action(TimerAction(period=14.0, actions=[bridge_node]))
     #ld.add_action(TimerAction(period=15.0, actions=[world_reset_action]))
     ld.add_action(TimerAction(period=16.0, actions=[OpaqueFunction(function=clear_world_entities)]))
-    ld.add_action(TimerAction(period=17.0, actions=[generate_config_node]))
+
     # 2. Wait for Gazebo to be fully loaded before starting map package
     
     # 3. Configure and activate lifecycle nodes with single attempts and proper delays
@@ -958,8 +950,9 @@ def generate_launch_description():
     ld.add_action(TimerAction(period=65.0, actions=[OpaqueFunction(function=configure_gates)]))
     ld.add_action(TimerAction(period=75.0, actions=[OpaqueFunction(function=activate_gates)]))
     
-    ld.add_action(TimerAction(period=85.0, actions=[map_pkg_node]))
+    ld.add_action(TimerAction(period=80.0, actions=[generate_config_node])) 
     ld.add_action(TimerAction(period=90.0, actions=[create_map_node]))
+    ld.add_action(TimerAction(period=85.0, actions=[map_pkg_node]))
     
     # Add single check to ensure map is created
     ld.add_action(TimerAction(period=100.0, actions=[OpaqueFunction(function=check_map_exists)]))

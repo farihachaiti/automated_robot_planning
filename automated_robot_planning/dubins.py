@@ -156,9 +156,9 @@ class DubinsPath():
                 logging.warning("Could not find valid next step, path planning failed.")
                 break
             # Avoid repeated points
-            if self.close_enough(valid_new_pos, current_pos, threshold=1e-6):
-                logging.warning("No progress made, path planning stuck.")
-                break
+            #if self.close_enough(valid_new_pos, current_pos, threshold=1e-6):
+            #    logging.warning("No progress made, path planning stuck.")
+            #    break
             if self.close_enough(new_pos, valid_new_pos, threshold=0.5) and valid_new_pos==goal:
                 path.append(valid_new_pos)
                 return path
