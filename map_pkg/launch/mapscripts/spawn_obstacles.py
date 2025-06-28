@@ -1,7 +1,6 @@
 import os, yaml, random
 import numpy as np
 from pathlib import Path
-import time
 
 from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
@@ -25,31 +24,33 @@ def spawn_obstacles(context):
         len(obstacles['vect_dim_x']) == len(obstacles["vect_dim_y"]), \
         "The number of obstacles in the conf file is wrong. The script for generating the configuration made a mistake."
 
-    # Generate unique timestamp for this spawn session
-    timestamp = int(time.time() * 1000)
-    
     nodes = []
     for obs in range(len(obstacles['vect_x'])):
-        center = (obstacles['vect_x'][obs], obstacles['vect_y'][obs])
+        # If x and y are 0, then the gate is random
+
+        if obstacles['vect_type'][obs] == "box":
+            obs_polygon = rectangle(obstacles['vect_x'][obs], obstacles['vect_y'][obs], obstacles['vect_dim_x'][obs], obstacles['vect_dim_y'][obs], obstacles['vect_yaw'][obs])
+            with open(box_model_path, 'r') as in_file:
+                obs_model = in_file.read().replace("<size>1 1 1</size>", f"<size>{obstacles['vect_dim_x'][obs]} {obstacles['vect_dim_y'][obs]} 1</size>")
         
-        if obstacles["vect_type"][obs] == "cylinder":
-            with open(cylinder_model_path, 'r') as file:
-                obstacle_model = file.read()
-            obstacle_model = obstacle_model.replace("##radius##", str(obstacles['vect_dim_x'][obs]/2))
-            obstacle_model = obstacle_model.replace("##height##", str(obstacles['vect_dim_y'][obs]))
+        elif obstacles['vect_type'][obs] == "cylinder":
+            obs_polygon = circle(obstacles['vect_x'][obs], obstacles['vect_y'][obs], obstacles['vect_dim_x'][obs])
+            with open(cylinder_model_path, 'r') as in_file:
+                obs_model = in_file.read().replace("<radius>0.5</radius>", f"<radius>{obstacles['vect_dim_x'][obs]}</radius>")
         else:
-            with open(box_model_path, 'r') as file:
-                obstacle_model = file.read()
-            obstacle_model = obstacle_model.replace("##dx##", str(obstacles['vect_dim_x'][obs]))
-            obstacle_model = obstacle_model.replace("##dy##", str(obstacles['vect_dim_y'][obs]))
-            obstacle_model = obstacle_model.replace("##dz##", str(obstacles['vect_dim_y'][obs]))
+            raise Exception(f"The obstacle type {obstacles['vect_type'][obs]} is not supported")
 
-        with open('tmp.sdf', 'w') as file:
-            file.write(obstacle_model)
-            path = Path(file.name).resolve()
+        center = [obs_polygon.centroid.coords[0][0], obs_polygon.centroid.coords[0][1]]
+        print("Spawning obstacle in ", center, abs(center[0]), abs(center[1]))
+        if abs(center[0]) < 1e-8:
+            center[0] = 0
+        if abs(center[1]) < 1e-8:
+            center[1] = 0
 
-        # Create unique entity name with timestamp and obstacle index
-        entity_name = f"{obstacles['vect_type'][obs]}_{timestamp}_{obs}"
+
+        with open(f"obs{obs}_tmp.sdf", 'w') as out_file:
+            out_file.write(obs_model)
+            path = Path(out_file.name).resolve()
         
 
         nodes.append(
@@ -58,7 +59,7 @@ def spawn_obstacles(context):
                 executable='create',
                 arguments=[
                             '-file', PythonExpression(["'", str(path), "'"]),
-                            '-entity', PythonExpression(["'", entity_name, "'"]),
+                            '-entity', PythonExpression(["'", f"obstacles{obs}", "'"]),
                             '-x', PythonExpression(["'", str(center[0]), "'"]),
                             '-y', PythonExpression(["'", str(center[1]), "'"]),
                             '-z', PythonExpression(["'", str(0.0001), "'"]),

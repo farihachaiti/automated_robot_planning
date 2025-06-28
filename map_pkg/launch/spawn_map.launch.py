@@ -99,36 +99,28 @@ def generate_launch_description():
         executable='send_borders',
         name='send_borders',
         output='screen',
-        parameters=[{
-            'use_sim_time': True
-        }, gen_map_params_file]
+        parameters=[gen_map_params_file]
     )
     send_gates = Node(
         package='map_pkg',
         executable='send_gates',
         name='send_gates',
         output='screen',
-        parameters=[{
-            'use_sim_time': True
-        }, gen_map_params_file]
+        parameters=[gen_map_params_file]
     )
     send_obstacles = Node(
         package='map_pkg',
         executable='send_obstacles',
         name='send_obstacles',
         output='screen',
-        parameters=[{
-            'use_sim_time': True
-        }, gen_map_params_file]
+        parameters=[gen_map_params_file]
     )
     send_victims = Node(
         package='map_pkg',
         executable='send_victims',
         name='send_victims',
         output='screen',
-        parameters=[{
-            'use_sim_time': True
-        }, gen_map_params_file],
+        parameters=[gen_map_params_file],
         condition=IfCondition(victims_activated)
     )
     send_timeout = LifecycleNode(
@@ -137,9 +129,7 @@ def generate_launch_description():
         name='send_timeout',
         output='screen',
         namespace='',
-        parameters=[{
-            'use_sim_time': True
-        }, gen_map_params_file],
+        parameters=[gen_map_params_file],
         condition=IfCondition(victims_activated)
     )
     # activate_timeout = RegisterEventHandler(

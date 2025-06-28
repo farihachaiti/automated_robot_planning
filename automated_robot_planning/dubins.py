@@ -1,7 +1,7 @@
 import math
 import numpy as np
 from scipy.interpolate import CubicSpline
-#from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 import logging
@@ -22,7 +22,7 @@ class DubinsPath():
         self.robot_positions = robot_positions
         
         self.yaml_path = os.path.join(
-        #get_package_share_directory('map_pkg'),
+        get_package_share_directory('map_pkg'),
         'config',
         'full_config.yaml'
         )
@@ -146,12 +146,12 @@ class DubinsPath():
                 min(self.distance, 2*self.min_turning_radius),
                 current_pos
             )
-            self.logger.error(f"The new position is: {new_pos}")
+            #self.logger.error(f"The new position is: {new_pos}")
             valid_new_pos = self.find_valid_position_toward_goal(
                 new_pos, goal, self.map_bounds, self.robot_positions, self.obstacles, robot_radius=0.4,
                 min_robot_distance=0.05, min_obstacle_distance=0.05, steps=10
             )
-            self.logger.error(f"The valid new position is: {valid_new_pos}")
+            #self.logger.error(f"The valid new position is: {valid_new_pos}")
             if valid_new_pos is None:
                 logging.warning("Could not find valid next step, path planning failed.")
                 break
@@ -247,8 +247,8 @@ class DubinsPath():
       
         
         try:
-            #with open(self.yaml_path, 'r') as file:
-            #    config = yaml.safe_load(file)
+            with open(self.yaml_path, 'r') as file:
+                config = yaml.safe_load(file)
                 
             # Get map dimensions from root parameters
             root_params = config.get('/', {}).get('ros__parameters', {})
@@ -372,5 +372,5 @@ def main():
         print(f"Point {i}: x={point[0]:.2f}, y={point[1]:.2f}, θ={math.degrees(point[2]):.2f}°")
     
     print(f"\nTotal path length: {len(path)} segments")
-if __name__ == '__main__':
-    main()
+#if __name__ == '__main__':
+#    main()

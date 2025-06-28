@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os, yaml, random
 import numpy as np
-import time
 
 from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
@@ -25,9 +24,6 @@ def spawn_gates(context):
     # Check that all vectors have the same number of gates
     assert len(gates['x']) == len(gates['y']) == len(gates['yaw']), "The number of gates in the conf file is wrong. The script for generating the configuration made a mistake."
 
-    # Generate unique timestamp for this spawn session
-    timestamp = int(time.time() * 1000)
-
     nodes = []
     for gate in range(len(gates['x'])):
         print(f"Spawning gate in {gates['x'][gate]}, {gates['y'][gate]} with yaw {gates['yaw'][gate]}")
@@ -37,16 +33,13 @@ def spawn_gates(context):
 
         center = gate_polygon.centroid.coords[0]
         
-        # Create unique entity name with timestamp
-        entity_name = f"gate_{timestamp}_{gate}"
-        
         nodes.append(
             Node(
                 package='ros_gz_sim',
                 executable='create',
                 arguments=[
                     '-file', PythonExpression(["'", gate_model_path, "'"]),
-                    '-entity', PythonExpression(["'", entity_name, "'"]),
+                    '-entity', PythonExpression(["'", f"gates{gate}", "'"]),
                     '-x', PythonExpression(["'", str(center[0]), "'"]),
                     '-y', PythonExpression(["'", str(center[1]), "'"]),
                     '-z', PythonExpression(["'", str(0.0001), "'"]),

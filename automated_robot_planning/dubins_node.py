@@ -138,17 +138,24 @@ class DubinsPathPlanner(Node):
         for q in path:
             pose = PoseStamped()
             pose.header.frame_id = path_msg.header.frame_id
-            pose.pose.position = Point(x=q[0], y=q[1], z=0.0)
-            pose.pose.orientation = self.yaw_to_quaternion(q[2])
+            # Convert numpy arrays to float values for ROS2 Point message
+            x_val = float(q[0]) if hasattr(q[0], '__iter__') else q[0]
+            y_val = float(q[1]) if hasattr(q[1], '__iter__') else q[1]
+            yaw_val = float(q[2]) if hasattr(q[2], '__iter__') else q[2]
+            pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
+            pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
             path_msg.poses.append(pose)
         self.path_pub.publish(path_msg)
+        self.get_logger().info(f"Published Dubins path with {len(path_msg.poses)} points.")
+        self.get_logger().info(f"Published Dubins path with Pose {idx}: pos=({p.x}, {p.y}, {p.z}), ori=({o.x}, {o.y}, {o.z}, {o.w})")
+        self.path_published_event.set()
         if hasattr(self, 'loop'):
             asyncio.run_coroutine_threadsafe(self.send_follow_path_goal(path_msg), self.loop)
         else:
             self.get_logger().error('No asyncio event loop found in node.')
        
         self.get_logger().info(f"Path frame_id: {path_msg.header.frame_id}")
-        if path_msg.poses:
+        '''if path_msg.poses:
             first = path_msg.poses[0].pose
             last = path_msg.poses[-1].pose
             self.get_logger().info(f"First pose: ({first.position.x}, {first.position.y}, {first.position.z}), orientation: ({first.orientation.x}, {first.orientation.y}, {first.orientation.z}, {first.orientation.w})")
@@ -167,8 +174,8 @@ class DubinsPathPlanner(Node):
                 if ori_zero:
                     self.get_logger().warn(f"Pose {idx} orientation is all zeros (invalid quaternion)")
         else:
-            self.get_logger().warn('Path is empty!')
-        self.path_published_event.set()
+            self.get_logger().warn('Path is empty!')'''
+        
 
     def pose_to_tuple(self, pose: Pose):
         x = pose.position.x
