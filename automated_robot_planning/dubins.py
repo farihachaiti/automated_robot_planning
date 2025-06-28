@@ -134,6 +134,23 @@ class DubinsPath():
         min_robot_distance=0.05
         min_obstacle_distance=0.05
         last_distance = self.get_distance(current_pos, goal)
+        def check_valid(x, y):
+            x_min, x_max, y_min, y_max = self.map_bounds
+            if not (x_min + robot_radius <= x <= x_max - robot_radius and y_min + robot_radius <= y <= y_max - robot_radius):
+                return False
+
+            # Check distance from other robots
+            for rx, ry, _ in self.robot_positions:
+                dist = ((x - rx)**2 + (y - ry)**2)**0.5
+                if dist < (2 * robot_radius + min_robot_distance):
+                    return False
+
+            # Check distance from obstacles
+            for ox, oy, radius in self.obstacles:
+                dist = ((x - ox)**2 + (y - oy)**2)**0.5
+                if dist < (radius + robot_radius + min_obstacle_distance):
+                    return False
+            return True
         while not self.close_enough(current_pos, goal):
             # Update path parameters
             self.distance = self.get_distance(current_pos, goal)
@@ -147,47 +164,34 @@ class DubinsPath():
                 current_pos
             )
             #self.logger.error(f"The new position is: {new_pos}")
-            valid_new_pos = self.find_valid_position_toward_goal(
+            '''valid_new_pos = self.find_valid_position_toward_goal(
                 new_pos, goal, self.map_bounds, self.robot_positions, self.obstacles, robot_radius=0.4,
                 min_robot_distance=0.05, min_obstacle_distance=0.05, steps=10
-            )
+            )'''
             #self.logger.error(f"The valid new position is: {valid_new_pos}")
-            if valid_new_pos is None:
+            if new_pos is None:
                 logging.warning("Could not find valid next step, path planning failed.")
                 break
             # Avoid repeated points
-            #if self.close_enough(valid_new_pos, current_pos, threshold=1e-6):
-            #    logging.warning("No progress made, path planning stuck.")
-            #    break
-            if self.close_enough(new_pos, valid_new_pos, threshold=0.5) and valid_new_pos==goal:
-                path.append(valid_new_pos)
+            if self.close_enough(current_pos, new_pos, threshold=1e-6):
+                logging.warning("No progress made, path planning stuck.")
+                break
+            if self.close_enough(current_pos, new_pos, threshold=0.5) and new_pos==goal:
+                path.append(new_pos)
                 return path
             # Interpolate between current_pos and valid_new_pos
-            intermediate_points = self.interpolate_points(current_pos, valid_new_pos, step_size=0.2)
-            for pt in intermediate_points:
+            if check_valid(new_pos[0], new_pos[1]):
+                path.append(new_pos)
+                current_pos = new_pos
+            else: 
+                current_pos = new_pos
+                continue  
+                #intermediate_points = self.interpolate_points(current_pos, valid_new_pos, step_size=0.2)
+                #for pt in intermediate_points:
                 # Use the same check_valid logic as in find_valid_position_toward_goal
-                def check_valid(x, y):
-                    x_min, x_max, y_min, y_max = self.map_bounds
-                    if not (x_min + robot_radius <= x <= x_max - robot_radius and y_min + robot_radius <= y <= y_max - robot_radius):
-                        return False
-
-                    # Check distance from other robots
-                    for rx, ry, _ in self.robot_positions:
-                        dist = ((x - rx)**2 + (y - ry)**2)**0.5
-                        if dist < (2 * robot_radius + min_robot_distance):
-                            return False
-
-                    # Check distance from obstacles
-                    for ox, oy, radius in self.obstacles:
-                        dist = ((x - ox)**2 + (y - oy)**2)**0.5
-                        if dist < (radius + robot_radius + min_obstacle_distance):
-                            return False
-                    return True
-                if check_valid(pt[0], pt[1]):
-                    path.append(pt)
-                else:
-                    break
-            current_pos = pt
+ 
+    
+            current_pos = new_pos
     
             steps += 1
             if steps >= max_steps:
@@ -252,8 +256,8 @@ class DubinsPath():
                 
             # Get map dimensions from root parameters
             root_params = config.get('/', {}).get('ros__parameters', {})
-            dx = float(root_params.get('dx', 12.0))  # Default to 12.0 if not specified
-            dy = float(root_params.get('dy', 22.0))  # Default to 12.0 if not specified
+            dx = float(root_params.get('dx', 10.0))  # Default to 12.0 if not specified
+            dy = float(root_params.get('dy', 20.0))  # Default to 12.0 if not specified
             
             # Calculate map bounds (centered at origin)
             map_bounds = (-dx/2, dx/2, -dy/2, dy/2)
@@ -287,8 +291,21 @@ class DubinsPath():
         except Exception as e:
             logging.error(f"Error loading obstacles from YAML: {e}")
             # Add some default obstacles if loading fails
-            obstacles = [(0.0, 0.0, 1.0)]
-        
+            vect_x = [-3.7217116794479477, 1.0015742916634345, -0.09764584264339327, 0.39021553699774003, -3.7347266625811617]
+            vect_y = [-6.5895867813851305, -5.990009494173584, -6.081339720357923, 1.7851924412359708, 2.062924792806049]
+            vect_dim_x = [0.9472303576889589, 0.854017782573675, 0.6822544643904452, 0.9473346271529302, 0.8065071256362644]
+            vect_dim_y = [0.6449529454098106, 0.9815630335593322, 0.5073320193413408, 0.8686996689784644, 0.678918639515615]
+            dx = 10.0
+            dy = 20.0
+            map_bounds = (-dx/2, dx/2, -dy/2, dy/2)
+            for i in range(min(len(vect_x), len(vect_y))):
+                x = vect_x[i]
+                y = vect_y[i]
+                # Use max dimension as radius for simplicity
+                radius = max(
+                    vect_dim_x[i] if i < len(vect_dim_x) else 0.5,
+                    vect_dim_y[i] if i < len(vect_dim_y) else 0.5
+                ) / 2.0
         return obstacles, map_bounds
 
 

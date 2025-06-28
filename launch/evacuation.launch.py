@@ -462,6 +462,8 @@ def spawn_shelfini(context):
                 output='screen'
             ),
 
+
+
             Node(
                 package='automated_robot_planning',
                 namespace=shelfino_name,
@@ -478,6 +480,8 @@ def spawn_shelfini(context):
                 ],
                 output='screen'
             ),
+    
+ 
             # Include navigation stack for this robot
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([
@@ -502,21 +506,19 @@ def spawn_shelfini(context):
      
 
 
-    
-
           
 
-                Node(
-                    package='shelfino_gazebo',
-                    executable='destroy_shelfino',
-                    name='destroy_shelfino',
-                    namespace=shelfino_name,
-                    output='screen',
-                    parameters=[{
-                        'use_sim_time': True
-                    }],
-                    condition=launch.conditions.IfCondition(use_sim_time)
-                ),
+            Node(
+                package='shelfino_gazebo',
+                executable='destroy_shelfino',
+                name='destroy_shelfino',
+                namespace=shelfino_name,
+                output='screen',
+                parameters=[{
+                    'use_sim_time': True
+                }],
+                condition=launch.conditions.IfCondition(use_sim_time)
+            ),
 
        
             ])
@@ -951,8 +953,8 @@ def generate_launch_description():
     ld.add_action(TimerAction(period=75.0, actions=[OpaqueFunction(function=activate_gates)]))
     
     ld.add_action(TimerAction(period=80.0, actions=[generate_config_node])) 
-    ld.add_action(TimerAction(period=90.0, actions=[create_map_node]))
-    ld.add_action(TimerAction(period=85.0, actions=[map_pkg_node]))
+    ld.add_action(TimerAction(period=85.0, actions=[create_map_node]))
+    ld.add_action(TimerAction(period=90.0, actions=[map_pkg_node]))
     
     # Add single check to ensure map is created
     ld.add_action(TimerAction(period=100.0, actions=[OpaqueFunction(function=check_map_exists)]))

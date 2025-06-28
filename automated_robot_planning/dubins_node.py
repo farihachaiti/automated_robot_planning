@@ -188,33 +188,31 @@ class DubinsPathPlanner(Node):
         
         # Wait for the action server to be available
         if self.follow_path_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().info('Action server is available')
+            
             #for attempt in range(max_retries):
             goal_msg = FollowPath.Goal()
             goal_msg.path = path_msg
             goal_msg.controller_id = "FollowPath"
             goal_msg.goal_checker_id = "simple_goal_checker"
             goal_msg.progress_checker_id = "simple_progress_checker"
-            
+            self.get_logger().info('Action server is available')
             send_goal_future = self.follow_path_client.send_goal_async(goal_msg)
             self.get_logger().info('Sending path to FollowPath action server')
             goal_handle = await send_goal_future
 
-            if goal_handle.accepted:
+            if not goal_handle.accepted:
+                self.get_logger().error('FollowPath goal rejected!')
+             
+            else:
                 self.get_logger().info('FollowPath goal accepted, waiting for result...')
                 result_future = goal_handle.get_result_async()
                 result = await result_future
-                self.get_logger().info(f'FollowPath result: {result.status}')
-                self.get_logger().info(f"FollowPath result code: {result.result.error_code}")
-                self.get_logger().info(f"Error string: {result.result.error_string}")
-                self.navigation_complete.set()
-                return
-            else:
-                self.get_logger().error('FollowPath goal rejected! Retrying...')
-                await asyncio.sleep(1.0)
+            self.get_logger().info(f'FollowPath result: {result.status}')
+            self.get_logger().info(f"FollowPath result code: {result.result.error_code}")
+            self.get_logger().info(f"Error string: {result.result.error_string}")
+            self.navigation_complete.set()
+            return
 
-        self.get_logger().error('FollowPath goal rejected after all retries.')
-        self.navigation_complete.set()
 
     def send_simple_straight_path(self):
         import copy
