@@ -1,2 +1,0 @@
-Invoking command in '/home/fariha/ros2_ws/src/automated_robot_planning/build/automated_robot_planning': /usr/bin/cmake /home/fariha/ros2_ws/src/automated_robot_planning -DCMAKE_INSTALL_PREFIX=/home/fariha/ros2_ws/src/automated_robot_planning/install/automated_robot_planning
-Invoked command in '/home/fariha/ros2_ws/src/automated_robot_planning/build/automated_robot_planning' returned '1': /usr/bin/cmake /home/fariha/ros2_ws/src/automated_robot_planning -DCMAKE_INSTALL_PREFIX=/home/fariha/ros2_ws/src/automated_robot_planning/install/automated_robot_planning
