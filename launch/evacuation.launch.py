@@ -183,7 +183,7 @@ def is_position_valid(x, y, robot_positions, obstacles, map_bounds, robot_radius
             return False
     return True
 
-def generate_robot_positions(n_robots, obstacles, map_bounds, robot_radius=0.2, min_robot_distance=0.05, min_obstacle_distance=0.05, max_attempts=100):
+def generate_robot_positions(n_robots, obstacles, map_bounds, robot_radius=0.4, min_robot_distance=0.05, min_obstacle_distance=0.05, max_attempts=100):
     """Generate positions for robots that avoid obstacles, other robots, and map bounds."""
     robot_positions = []
     x_min, x_max, y_min, y_max = map_bounds
@@ -218,28 +218,28 @@ def load_obstacles_from_yaml(yaml_path):
         tuple: (obstacles, map_bounds) where map_bounds is (x_min, x_max, y_min, y_max)
     """
     obstacles = []
-    map_bounds = (-6.0, 6.0, -6.0, 6.0)  # Default bounds if not specified in YAML
+    map_bounds = (-10.0, 10.0, -5.0, 5.0) 
     
     try:
         with open(yaml_path, 'r') as file:
             config = yaml.safe_load(file)
             
         # Get map dimensions from root parameters
-        root_params = config.get('/', {}).get('ros__parameters', {})
-        dx = float(root_params.get('dx', 12.0))  # Default to 12.0 if not specified
-        dy = float(root_params.get('dy', 12.0))  # Default to 12.0 if not specified
+        root_params = config.get('/**', {}).get('ros__parameters', {})
+        dx = float(root_params.get('dx'))
+        dy = float(root_params.get('dy'))
         
         # Calculate map bounds (centered at origin)
         map_bounds = (-dx/2, dx/2, -dy/2, dy/2)
         
         # Get obstacle parameters
-        obs_params = config.get('/send_obstacles', {}).get('ros__parameters', {})
+        obs_params = config.get('/**/send_obstacles', {}).get('ros__parameters', {})
         
         # Process vector-based obstacles
-        vect_x = obs_params.get('vect_x', [])
-        vect_y = obs_params.get('vect_y', [])
-        vect_dim_x = obs_params.get('vect_dim_x', [])
-        vect_dim_y = obs_params.get('vect_dim_y', [])
+        vect_x = obs_params.get('vect_x')
+        vect_y = obs_params.get('vect_y')
+        vect_dim_x = obs_params.get('vect_dim_x')
+        vect_dim_y = obs_params.get('vect_dim_y')
         
         # Add vector-based obstacles
         for i in range(min(len(vect_x), len(vect_y))):
@@ -257,7 +257,7 @@ def load_obstacles_from_yaml(yaml_path):
     except Exception as e:
         logging.error(f"Error loading obstacles from YAML: {e}")
         # Add some default obstacles if loading fails
-        obstacles = [(0.0, 0.0, 1.0)]
+
     
     return obstacles, map_bounds
 
@@ -288,19 +288,19 @@ def spawn_shelfini(context):
         'full_config.yaml'
     )
     
-    if os.path.exists(yaml_path):
-        logging.info(f"Loading obstacles and map dimensions from: {yaml_path}")
-        obstacles, map_bounds = load_obstacles_from_yaml(yaml_path)
-        logging.info(f"Using map bounds: {map_bounds}")
-    else:
-        logging.warning(f"Could not find config file at {yaml_path}. Using default obstacles and map bounds.")
-        obstacles = [(0.0, 0.0, 1.0)]  # Default obstacle
-        map_bounds = (-6.0, 6.0, -6.0, 6.0)  # Default bounds
+
+    logging.info(f"Loading obstacles and map dimensions from: {yaml_path}")
+    obstacles, map_bounds = load_obstacles_from_yaml(yaml_path)
+
+
     
     # Generate robot positions avoiding obstacles
     n_robots = int(context.launch_configurations['n_shelfini'])
     robot_positions = generate_robot_positions(n_robots, obstacles, map_bounds)
     flat_robot_positions = [item for sublist in robot_positions for item in sublist]
+    flat_obstacles = [item for obs in obstacles for item in obs]
+    flat_obstacles_str = ','.join(str(x) for x in flat_obstacles)
+    map_bounds_str = ','.join(str(x) for x in map_bounds)
     logging.info(f"Generated {len(robot_positions)} robot positions")
     for i, (x, y, yaw) in enumerate(robot_positions):
         logging.info(f"Robot {i}: x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
@@ -470,6 +470,8 @@ def spawn_shelfini(context):
                 executable='dubins_node.py',
                 parameters=[
                     {'robot_positions': flat_robot_positions},
+                    {'obstacles': flat_obstacles_str},
+                    {'map_bounds': map_bounds_str},
                     {'use_sim_time': True},
                     {'robot_name': shelfino_name},
                     {'initial_x': x_pos},

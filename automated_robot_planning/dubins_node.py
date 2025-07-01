@@ -29,7 +29,16 @@ class DubinsPathPlanner(Node):
         [0.0],
         ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE_ARRAY)
     )
-
+        self.declare_parameter(
+        'map_bounds',
+        "",
+        ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
+    )
+        self.declare_parameter(
+        'obstacles',
+        "",
+        ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
+    )
         self.turning_radius = self.get_parameter('turning_radius').value
         self.step_size = self.get_parameter('step_size').value
         self.declare_parameter('initial_x', 0.0)
@@ -77,6 +86,13 @@ class DubinsPathPlanner(Node):
 
         positions = self.get_parameter('robot_positions').get_parameter_value().double_array_value
         self.robot_positions = [(positions[i], positions[i+1], positions[i+2]) for i in range(0, len(positions), 3)]
+        obstacles = self.get_parameter('obstacles').get_parameter_value().string_value
+        flat_obstacles = [float(x) for x in obstacles.split(',')]
+# Now reconstruct as needed
+        self.obstacles = [(flat_obstacles[i], flat_obstacles[i+1], flat_obstacles[i+2]) for i in range(0, len(flat_obstacles), 3)]
+        map_bounds = self.get_parameter('map_bounds').get_parameter_value().string_value
+        self.map_bounds = [float(x) for x in map_bounds.split(',')]
+
 
     def gate_position_callback(self, msg):
         """Process incoming gate position data"""
@@ -136,7 +152,7 @@ class DubinsPathPlanner(Node):
         
         # Plan Dubins path
         self.get_logger().info('Creating DubinsPath object...')
-        dubinspath = DubinsPath(start, goal, 1.0, self.robot_positions, self.get_logger())
+        dubinspath = DubinsPath(start, goal, 1.0, self.robot_positions, self.map_bounds, self.obstacles, self.get_logger())
         self.get_logger().info('Planning path...')
         path = dubinspath.plan_path(start, goal)
         self.get_logger().info(f'Path planned with {len(path)} points')

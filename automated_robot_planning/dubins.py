@@ -1,14 +1,14 @@
 import math
 import numpy as np
 from scipy.interpolate import CubicSpline
-from ament_index_python.packages import get_package_share_directory
+#from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 import logging
 import matplotlib.pyplot as plt
 
 class DubinsPath():
-    def __init__(self, start, end, curvature, robot_positions, logger):
+    def __init__(self, start, end, curvature, robot_positions, map_bounds, obstacles, logger):
         # Define parameters
         self.turning_angle = math.pi/3
         self.min_turning_radius = 1.0/curvature
@@ -21,9 +21,11 @@ class DubinsPath():
         self.theta_diff = self.get_theta_diff(self.start, self.end_point)
         self.sum_arcs = 2 * math.pi * self.min_turning_radius
         self.robot_positions = robot_positions
+        self.map_bounds = map_bounds
+        self.obstacles = obstacles
         
         self.yaml_path = os.path.join(
-        get_package_share_directory('map_pkg'),
+        #get_package_share_directory('map_pkg'),
         'config',
         'full_config.yaml'
         )
@@ -100,6 +102,15 @@ class DubinsPath():
             t = mod2pi(-alpha + math.atan2((math.cos(alpha)-math.cos(beta)), d+math.sin(alpha)-math.sin(beta)) + p/2.)
             q = mod2pi(mod2pi(beta) - alpha - t + p)
             paths['LRL'] = (t, p, q)
+
+        # Fallback: straight segment (S) if start and goal are aligned
+        if d > 0:
+            # Only add if the heading difference is small (i.e., almost aligned)
+            if abs((alpha - beta) % (2 * math.pi)) < 0.05:
+                t = 0.0
+                p = d
+                q = 0.0
+                paths['S'] = (t, p, q)
         return paths
 
     def compute_segments(self, initial_heading, distance, start):
@@ -115,17 +126,25 @@ class DubinsPath():
         beta = (th1 - theta) % (2*math.pi)
         # Compute all Dubins paths
         all_paths = self.dubins_segment_lengths(alpha, beta, d)
-        #print(all_paths)
         best = None
         best_length = float('inf')
         best_seq = None
         best_segs = None
         for seq, (t, p, q) in all_paths.items():
             total = (t + p + q) * self.min_turning_radius
-            if total < best_length:
-                best_length = total
+            penalty = 0.0
+            if seq in ['LRL', 'RLR']:
+                penalty += 10.0  # Large penalty for CCC paths (sharp turns)
+            if seq == 'S':
+                segs = [p * self.min_turning_radius]  # Only one segment for straight
+            else:
+                segs = [t * self.min_turning_radius, p * self.min_turning_radius, q * self.min_turning_radius]
+                if seq == 'S' and p * self.min_turning_radius < 5.0:  # Short straight segment
+                    penalty += 5.0
+            if total + penalty < best_length:
+                best_length = total + penalty
                 best_seq = list(seq)
-                best_segs = [t*self.min_turning_radius, p*self.min_turning_radius, q*self.min_turning_radius]
+                best_segs = segs
         if best_seq is None:
             # fallback to straight
             best_seq = ['S']
@@ -199,13 +218,19 @@ class DubinsPath():
     def plan_path(self, start, goal):
         path = [start]
         current_pos = start
-        self.obstacles, self.map_bounds = self.load_obstacles_from_yaml(self.yaml_path)
-        max_steps = 5000  # Safety limit
+        
+        max_steps = 200  # Safety limit
         steps = 0
         robot_radius = 0.4
-        min_robot_distance=0.5
-        min_obstacle_distance=0.5
-        last_distance = self.get_distance(current_pos, goal)
+        min_robot_distance = 0.05
+        min_obstacle_distance = 0.05
+        
+      
+        # Use a reasonable threshold for convergence
+        threshold = 1.0
+        step_size = 2 * self.min_turning_radius
+        min_step_size = 0.5  # You can adjust this value
+
         def check_valid(x, y):
             x_min, x_max, y_min, y_max = self.map_bounds
             if not (x_min + robot_radius <= x <= x_max - robot_radius and y_min + robot_radius <= y <= y_max - robot_radius):
@@ -223,55 +248,57 @@ class DubinsPath():
                 if dist < (radius + robot_radius + min_obstacle_distance):
                     return False
             return True
-        while not self.close_enough(current_pos, goal):
+
+        print(f"Starting path planning from {start} to {goal}")
+        while not self.close_enough(current_pos, goal, threshold):
             # Update path parameters
-            self.distance = self.get_distance(current_pos, goal)
+            last_distance = self.get_distance(current_pos, goal)
             self.initial_heading = self.get_initial_heading(current_pos, goal)
             self.theta_diff = self.get_theta_diff(current_pos, goal)
-
+            step = max(min(self.distance, step_size), min_step_size)
             # Compute next segment
             (_, new_pos), sequence, length = self.compute_segments(
                 self.initial_heading,
-                min(self.distance, 2*self.min_turning_radius),
+                step,
                 current_pos
             )
-            #self.logger.error(f"The new position is: {new_pos}")
-            '''valid_new_pos = self.find_valid_position_toward_goal(
-                new_pos, goal, self.map_bounds, self.robot_positions, self.obstacles, robot_radius=0.4,
-                min_robot_distance=0.05, min_obstacle_distance=0.05, steps=10
-            )'''
-            #self.logger.error(f"The valid new position is: {valid_new_pos}")
+
+            print(f"Step {steps}:")
+            print(f"  Current position: {current_pos}")
+            print(f"  Next position: {new_pos}")
+            print(f"  Sequence: {sequence}, Segment length: {length:.3f}")
+            print(f"  Distance to goal: {self.get_distance(new_pos, goal):.3f}")
+
             if new_pos is None:
-                logging.warning("Could not find valid next step, path planning failed.")
+                print("Could not find valid next step, path planning failed.")
                 break
             # Avoid repeated points
-            if self.close_enough(current_pos, new_pos, threshold=0.000001):
-                logging.warning("No progress made, path planning stuck.")
+            if self.close_enough(current_pos, new_pos, threshold=0.5):
+                print("No progress made, path planning stuck.")
                 break
-
-            # Interpolate between current_pos and valid_new_pos
-      
-                #intermediate_points = self.interpolate_points(current_pos, valid_new_pos, step_size=0.2)
-                #for pt in intermediate_points:
-                # Use the same check_valid logic as in find_valid_position_toward_goal
-            
+    
             if check_valid(new_pos[0], new_pos[1]):
                 path.append(new_pos)
                 current_pos = new_pos
             else: 
                 current_pos = new_pos
                 continue 
-            
-            path.append(new_pos)
-            current_pos = new_pos
+       
+            #path.append(new_pos)
+            #current_pos = new_pos
     
             steps += 1
             if steps >= max_steps:
-                logging.warning("Maximum steps reached, stopping path planning.")
+                print("Maximum steps reached, stopping path planning.")
                 break
-        
-        return path
 
+        print(f"Path planning finished after {steps} steps. Path length: {len(path)}")
+        if len(path) < 2:
+            smoothed_path = path
+        else:
+            smoothed_path = self.smooth_path(path)
+        return path
+        
     def make_close_enough(self, start, end, length=None):
         t = 10
         while not self.close_enough(self.end_point, end, 0.05):
@@ -309,78 +336,18 @@ class DubinsPath():
         
         return tuple(interpolated_point)
 
-
-    def load_obstacles_from_yaml(self, yaml_path):
-        """Load obstacle data and map dimensions from YAML configuration file.
-        
-        Returns:
-            tuple: (obstacles, map_bounds) where map_bounds is (x_min, x_max, y_min, y_max)
-        """
-        obstacles = []
-        map_bounds = (-6.0, 6.0, -6.0, 6.0)  # Default bounds if not specified in YAML
-        x_min, x_max, y_min, y_max = map_bounds
-
-      
-        
-        try:
-            with open(self.yaml_path, 'r') as file:
-                config = yaml.safe_load(file)
-                
-            # Get map dimensions from root parameters
-            root_params = config.get('/', {}).get('ros__parameters', {})
-            dx = float(root_params.get('dx', 10.0))  # Default to 12.0 if not specified
-            dy = float(root_params.get('dy', 20.0))  # Default to 12.0 if not specified
-            
-            # Calculate map bounds (centered at origin)
-            map_bounds = (-dx/2, dx/2, -dy/2, dy/2)
-            
-            # Get obstacle parameters
-            obs_params = config.get('/send_obstacles', {}).get('ros__parameters', {})
-            
-            # Process vector-based obstacles
-            vect_x = obs_params.get('vect_x', [-3.7217116794479477, 1.0015742916634345, -0.09764584264339327, 0.39021553699774003, -3.7347266625811617])
-            vect_y = obs_params.get('vect_y', [-6.5895867813851305, -5.990009494173584, -6.081339720357923, 1.7851924412359708, 2.062924792806049])
-            vect_dim_x = obs_params.get('vect_dim_x', [0.9472303576889589, 0.854017782573675, 0.6822544643904452, 0.9473346271529302, 0.8065071256362644])
-            vect_dim_y = obs_params.get('vect_dim_y', [0.6449529454098106, 0.9815630335593322, 0.5073320193413408, 0.8686996689784644, 0.678918639515615])
-            print(f'vect_x: {vect_x}')
-            print(f'vect_y: {vect_y}')
-            print(f'vect_dim_x: {vect_dim_x}')
-            print(f'vect_dim_y: {vect_dim_y}')
-            
-            # Add vector-based obstacles
-            for i in range(min(len(vect_x), len(vect_y))):
-                x = vect_x[i]
-                y = vect_y[i]
-                # Use max dimension as radius for simplicity
-                radius = max(
-                    vect_dim_x[i] if i < len(vect_dim_x) else 0.5,
-                    vect_dim_y[i] if i < len(vect_dim_y) else 0.5
-                ) / 2.0
-                obstacles.append((x, y, radius))
-            
-            logging.info(f"Loaded {len(obstacles)} obstacles from YAML config")
-            
-        except Exception as e:
-            logging.error(f"Error loading obstacles from YAML: {e}")
-            # Add some default obstacles if loading fails
-            vect_x = [-3.7217116794479477, 1.0015742916634345, -0.09764584264339327, 0.39021553699774003, -3.7347266625811617]
-            vect_y = [-6.5895867813851305, -5.990009494173584, -6.081339720357923, 1.7851924412359708, 2.062924792806049]
-            vect_dim_x = [0.9472303576889589, 0.854017782573675, 0.6822544643904452, 0.9473346271529302, 0.8065071256362644]
-            vect_dim_y = [0.6449529454098106, 0.9815630335593322, 0.5073320193413408, 0.8686996689784644, 0.678918639515615]
-            dx = 10.0
-            dy = 20.0
-            map_bounds = (-dx/2, dx/2, -dy/2, dy/2)
-            for i in range(min(len(vect_x), len(vect_y))):
-                x = vect_x[i]
-                y = vect_y[i]
-                # Use max dimension as radius for simplicity
-                radius = max(
-                    vect_dim_x[i] if i < len(vect_dim_x) else 0.5,
-                    vect_dim_y[i] if i < len(vect_dim_y) else 0.5
-                ) / 2.0
-        return obstacles, map_bounds
-
-
+    def smooth_path(self, path, num_points=100):
+        if len(path) < 2:
+            return path  # Not enough points to smooth
+        xs = [p[0] for p in path]
+        ys = [p[1] for p in path]
+        ts = np.linspace(0, 1, len(xs))
+        t_fine = np.linspace(0, 1, num_points)
+        cs_x = CubicSpline(ts, xs)
+        cs_y = CubicSpline(ts, ys)
+        xs_smooth = cs_x(t_fine)
+        ys_smooth = cs_y(t_fine)
+        return list(zip(xs_smooth, ys_smooth))
 
     def find_valid_position_toward_goal(self, new_pos, goal_pos, map_bounds, robot_positions, obstacles, robot_radius=0.4, min_robot_distance=0.05, min_obstacle_distance=0.05, steps=10):
         """
@@ -447,17 +414,38 @@ class DubinsPath():
         return points
 
 
+def load_obstacles_from_yaml():
+    obstacles = []
+    map_bounds = []
+    # Add some default obstacles if loading fails
+    vect_dim_x = [0.8011211001104662, 0.5121030174270204]
+    vect_dim_y = [0.7663025495066591, 1.0]
+    vect_x = [2.3572118362481698, -1.3509232375009814]
+    vect_y = [3.4168598650484014, 5.355224601477801]
+    dx = 10.0
+    dy = 20.0
+    map_bounds = (-dx/2, dx/2, -dy/2, dy/2)
+    for i in range(min(len(vect_x), len(vect_y))):
+        x = vect_x[i]
+        y = vect_y[i]
+        # Use max dimension as radius for simplicity
+        radius = max(
+            vect_dim_x[i] if i < len(vect_dim_x) else 0.5,
+            vect_dim_y[i] if i < len(vect_dim_y) else 0.5
+        ) / 2.0
+    return obstacles, map_bounds
 
 def main():
-    start = (-1.31, -0.16, 1.01)  # Fixed typo in y value
+    start = (-3.31, -5.42, -0.48)  # Fixed typo in y value
     start2 = (3.14, 1.42, 1.71)
     goal2 = (1.06, 8.06, math.pi/2)
-    goal = (-0.9817254262488451, -8.060254037844386, math.pi/2)
+    goal = (-3.086493, -8.060254, -1.570796)
     start3 = (-3.530316241159565, 3.164402679769098, -2.4564637764115815)
     goal3 = (-6.44371743686115, -4.9596620854277615, -2.6179938779914944)
-    dubinspath = DubinsPath(start3, goal3, 1.0, [], logging.getLogger(__name__))  # Curvature = 1.0
-    
-    path = dubinspath.plan_path(start3, goal3)
+    obstacles, map_bounds = load_obstacles_from_yaml()
+    dubinspath = DubinsPath(start, goal, 2.0, [(-3.31, -5.42, -0.48), (-1.64, -7.46, -2.79), (1.87, -1.77, -1.41)], map_bounds, obstacles, logging.getLogger(__name__))  # Curvature = 1.0
+   
+    path, smoothed_path = dubinspath.plan_path(start, goal)
     
     print("Path points:")
     for i, point in enumerate(path):
@@ -470,8 +458,8 @@ def main():
     ys = [p[1] for p in path]
     plt.figure(figsize=(8, 8))
     plt.plot(xs, ys, 'bo-', label='Dubins Path')
-    plt.plot(start3[0], start3[1], 'go', markersize=10, label='Start')
-    plt.plot(goal3[0], goal3[1], 'ro', markersize=10, label='Goal')
+    plt.plot(start[0], start[1], 'go', markersize=10, label='Start')
+    plt.plot(goal[0], goal[1], 'ro', markersize=10, label='Goal')
     plt.title('Dubins Path Visualization')
     plt.xlabel('X')
     plt.ylabel('Y')
@@ -480,5 +468,5 @@ def main():
     plt.grid(True)
     plt.show()
 
-#if __name__ == '__main__':
-#   main()
+if __name__ == '__main__':
+   main()
