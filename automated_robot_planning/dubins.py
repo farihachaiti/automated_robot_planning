@@ -5,6 +5,7 @@ from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 import logging
+import matplotlib.pyplot as plt
 
 class DubinsPath():
     def __init__(self, start, end, curvature, robot_positions, logger):
@@ -39,100 +40,171 @@ class DubinsPath():
         theta_diff = end[2] - start[2]
         return (theta_diff + math.pi) % (2 * math.pi) - math.pi  # Normalize angle to [-pi, pi]
 
-    def compute_segments(self, initial_heading, distance, start):
-        end_point = self.end_point
-        sequence = None
-        
-        # All angles should be in radians
-        initial_heading_rad = initial_heading
-        theta_diff_rad = self.theta_diff
-        
-        # Dubins path selection conditions (in order of preference)
-        if distance >= 2 * self.min_turning_radius:
-            # Check for CSC paths first (more optimal when possible)
-            if initial_heading_rad >= 0 and (initial_heading_rad + theta_diff_rad) >= 0:
-                end_point, length, sequence = self.path_segments(initial_heading_rad, distance, ['L', 'S', 'L'], start)
-            elif initial_heading_rad < 0 and (initial_heading_rad + theta_diff_rad) < 0:
-                end_point, length, sequence = self.path_segments(initial_heading_rad, distance, ['R', 'S', 'R'], start)
-            elif (initial_heading_rad + theta_diff_rad) >= 0:
-                end_point, length, sequence = self.path_segments(initial_heading_rad, distance, ['L', 'S', 'R'], start)
-            else:
-                end_point, length, sequence = self.path_segments(initial_heading_rad, distance, ['R', 'S', 'L'], start)
-        else:
-            # Check for CCC paths when distance is small
-            if initial_heading_rad >= 0:
-                end_point, length, sequence = self.path_segments(initial_heading_rad, distance, ['L', 'R', 'L'], start)
-            else:
-                end_point, length, sequence = self.path_segments(initial_heading_rad, distance, ['R', 'L', 'R'], start)
-        
-        # Fallback to straight line if very close
-        if sequence is None or distance < self.min_turning_radius:
-            end_point, length, sequence = self.path_segments(initial_heading_rad, distance, ['S'], start)
-        
-        return (start, end_point), sequence, length
+    def dubins_segment_lengths(self, alpha, beta, d):
+        # Returns a dict of {sequence: (t, p, q)} for all Dubins path types
+        # alpha, beta: angles in radians, d: normalized distance
+        paths = {}
+        def mod2pi(theta):
+            return theta % (2 * math.pi)
 
-    def path_segments(self, initial_heading, distance, segment_type, start):
+        # LSL
+        tmp0 = d + math.sin(alpha) - math.sin(beta)
+        p_squared = 2 + d**2 - 2*math.cos(alpha-beta) + 2*d*(math.sin(alpha)-math.sin(beta))
+        if p_squared >= 0:
+            tmp1 = math.atan2((math.cos(beta)-math.cos(alpha)), tmp0)
+            t = mod2pi(-alpha + tmp1)
+            p = math.sqrt(p_squared)
+            q = mod2pi(beta - tmp1)
+            paths['LSL'] = (t, p, q)
+
+        # RSR
+        tmp0 = d - math.sin(alpha) + math.sin(beta)
+        p_squared = 2 + d**2 - 2*math.cos(alpha-beta) + 2*d*(-math.sin(alpha)+math.sin(beta))
+        if p_squared >= 0:
+            tmp1 = math.atan2((math.cos(alpha)-math.cos(beta)), tmp0)
+            t = mod2pi(alpha - tmp1)
+            p = math.sqrt(p_squared)
+            q = mod2pi(-beta + tmp1)
+            paths['RSR'] = (t, p, q)
+
+        # LSR
+        p_squared = -2 + d**2 + 2*math.cos(alpha-beta) + 2*d*(math.sin(alpha)+math.sin(beta))
+        if p_squared >= 0:
+            p = math.sqrt(p_squared)
+            tmp2 = math.atan2((-math.cos(alpha)-math.cos(beta)), (d+math.sin(alpha)+math.sin(beta)))
+            t = mod2pi(-alpha + tmp2)
+            q = mod2pi(-mod2pi(beta) + tmp2)
+            paths['LSR'] = (t, p, q)
+
+        # RSL
+        p_squared = -2 + d**2 + 2*math.cos(alpha-beta) - 2*d*(math.sin(alpha)+math.sin(beta))
+        if p_squared >= 0:
+            p = math.sqrt(p_squared)
+            tmp2 = math.atan2((math.cos(alpha)+math.cos(beta)), (d-math.sin(alpha)-math.sin(beta)))
+            t = mod2pi(alpha - tmp2)
+            q = mod2pi(beta - tmp2)
+            paths['RSL'] = (t, p, q)
+
+        # RLR
+        tmp_rlr = (6. - d**2 + 2*math.cos(alpha-beta) + 2*d*(math.sin(alpha)-math.sin(beta))) / 8.
+        if abs(tmp_rlr) <= 1:
+            p = mod2pi(2*math.pi - math.acos(tmp_rlr))
+            t = mod2pi(alpha - math.atan2((math.cos(alpha)-math.cos(beta)), d-math.sin(alpha)+math.sin(beta)) + p/2.)
+            q = mod2pi(alpha - beta - t + p)
+            paths['RLR'] = (t, p, q)
+
+        # LRL
+        tmp_lrl = (6. - d**2 + 2*math.cos(alpha-beta) + 2*d*(-math.sin(alpha)+math.sin(beta))) / 8.
+        if abs(tmp_lrl) <= 1:
+            p = mod2pi(2*math.pi - math.acos(tmp_lrl))
+            t = mod2pi(-alpha + math.atan2((math.cos(alpha)-math.cos(beta)), d+math.sin(alpha)-math.sin(beta)) + p/2.)
+            q = mod2pi(mod2pi(beta) - alpha - t + p)
+            paths['LRL'] = (t, p, q)
+        return paths
+
+    def compute_segments(self, initial_heading, distance, start):
+        # True Dubins path equations implementation
+        x0, y0, th0 = start
+        x1, y1, th1 = self.end_point
+        dx = x1 - x0
+        dy = y1 - y0
+        D = math.hypot(dx, dy)
+        d = D / self.min_turning_radius
+        theta = math.atan2(dy, dx)
+        alpha = (initial_heading - theta) % (2*math.pi)
+        beta = (th1 - theta) % (2*math.pi)
+        # Compute all Dubins paths
+        all_paths = self.dubins_segment_lengths(alpha, beta, d)
+        #print(all_paths)
+        best = None
+        best_length = float('inf')
+        best_seq = None
+        best_segs = None
+        for seq, (t, p, q) in all_paths.items():
+            total = (t + p + q) * self.min_turning_radius
+            if total < best_length:
+                best_length = total
+                best_seq = list(seq)
+                best_segs = [t*self.min_turning_radius, p*self.min_turning_radius, q*self.min_turning_radius]
+        if best_seq is None:
+            # fallback to straight
+            best_seq = ['S']
+            best_segs = [distance]
+        end_point, length, sequence_str = self.path_segments(initial_heading, best_segs, best_seq, start)
+        return (start, end_point), sequence_str, length
+
+    def path_segments(self, initial_heading, segment_lengths, segment_type, start):
+        """
+        Compute the final pose and total length after following a sequence of Dubins path segments.
+
+        Args:
+            initial_heading (float): Starting orientation (radians).
+            segment_lengths (list of float): Lengths for each segment.
+            segment_type (list of str): Sequence of 'L', 'R', 'S'.
+            start (list or np.array): Starting pose [x, y, theta].
+
+        Returns:
+            tuple: (final_pose, total_length, segment_type_str)
+        """
         current_point = np.array([start[0], start[1], start[2]])
         total_length = 0.0
-        
-        for s in segment_type:
+
+        for s, seg_len in zip(segment_type, segment_lengths):
             if s == 'L':
                 # Left turn
                 center_x = current_point[0] + self.min_turning_radius * math.sin(initial_heading)
                 center_y = current_point[1] - self.min_turning_radius * math.cos(initial_heading)
-                
-                delta_theta = self.turning_angle
-                arc_length = delta_theta * self.min_turning_radius
-                
+                delta_theta = seg_len / self.min_turning_radius
+                arc_length = abs(delta_theta) * self.min_turning_radius
+
                 end_x = center_x - self.min_turning_radius * math.sin(initial_heading + delta_theta)
                 end_y = center_y + self.min_turning_radius * math.cos(initial_heading + delta_theta)
                 end_theta = (current_point[2] + delta_theta) % (2 * math.pi)
-                
+
                 current_point = np.array([end_x, end_y, end_theta])
                 initial_heading += delta_theta
                 total_length += arc_length
-                
+
             elif s == 'R':
                 # Right turn
                 center_x = current_point[0] - self.min_turning_radius * math.sin(initial_heading)
                 center_y = current_point[1] + self.min_turning_radius * math.cos(initial_heading)
-                
-                delta_theta = -self.turning_angle
+                delta_theta = -seg_len / self.min_turning_radius
                 arc_length = abs(delta_theta) * self.min_turning_radius
-                
+
                 end_x = center_x - self.min_turning_radius * math.sin(initial_heading + delta_theta)
                 end_y = center_y + self.min_turning_radius * math.cos(initial_heading + delta_theta)
                 end_theta = (current_point[2] + delta_theta) % (2 * math.pi)
-                
+
                 current_point = np.array([end_x, end_y, end_theta])
                 initial_heading += delta_theta
                 total_length += arc_length
-                
+
             elif s == 'S':
                 # Straight segment
-                end_x = current_point[0] + distance * math.cos(initial_heading)
-                end_y = current_point[1] + distance * math.sin(initial_heading)
+                end_x = current_point[0] + seg_len * math.cos(initial_heading)
+                end_y = current_point[1] + seg_len * math.sin(initial_heading)
                 end_theta = current_point[2]
-                
+
                 current_point = np.array([end_x, end_y, end_theta])
-                total_length += distance
-        
+                total_length += seg_len
+
         return tuple(current_point), total_length, ''.join(segment_type)
 
     def close_enough(self, config1, config2, threshold=0.05):
         position_diff = math.sqrt((config1[0]-config2[0])**2 + (config1[1]-config2[1])**2)
         angle_diff = min(abs(config1[2]-config2[2]), 2*math.pi - abs(config1[2]-config2[2]))
-        return position_diff <= threshold and angle_diff <= math.radians(5)
+        return position_diff <= threshold and angle_diff <= math.radians(threshold*100)
 
     def plan_path(self, start, goal):
         path = [start]
         current_pos = start
         self.obstacles, self.map_bounds = self.load_obstacles_from_yaml(self.yaml_path)
-        max_steps = 200  # Safety limit
+        max_steps = 5000  # Safety limit
         steps = 0
         robot_radius = 0.4
-        min_robot_distance=0.05
-        min_obstacle_distance=0.05
+        min_robot_distance=0.5
+        min_obstacle_distance=0.5
         last_distance = self.get_distance(current_pos, goal)
         def check_valid(x, y):
             x_min, x_max, y_min, y_max = self.map_bounds
@@ -173,24 +245,24 @@ class DubinsPath():
                 logging.warning("Could not find valid next step, path planning failed.")
                 break
             # Avoid repeated points
-            if self.close_enough(current_pos, new_pos, threshold=1e-6):
+            if self.close_enough(current_pos, new_pos, threshold=0.000001):
                 logging.warning("No progress made, path planning stuck.")
                 break
-            if self.close_enough(current_pos, new_pos, threshold=0.5) and new_pos==goal:
-                path.append(new_pos)
-                return path
+
             # Interpolate between current_pos and valid_new_pos
+      
+                #intermediate_points = self.interpolate_points(current_pos, valid_new_pos, step_size=0.2)
+                #for pt in intermediate_points:
+                # Use the same check_valid logic as in find_valid_position_toward_goal
+            
             if check_valid(new_pos[0], new_pos[1]):
                 path.append(new_pos)
                 current_pos = new_pos
             else: 
                 current_pos = new_pos
-                continue  
-                #intermediate_points = self.interpolate_points(current_pos, valid_new_pos, step_size=0.2)
-                #for pt in intermediate_points:
-                # Use the same check_valid logic as in find_valid_position_toward_goal
- 
-    
+                continue 
+            
+            path.append(new_pos)
             current_pos = new_pos
     
             steps += 1
@@ -378,16 +450,35 @@ class DubinsPath():
 
 def main():
     start = (-1.31, -0.16, 1.01)  # Fixed typo in y value
+    start2 = (3.14, 1.42, 1.71)
+    goal2 = (1.06, 8.06, math.pi/2)
     goal = (-0.9817254262488451, -8.060254037844386, math.pi/2)
+    start3 = (-3.530316241159565, 3.164402679769098, -2.4564637764115815)
+    goal3 = (-6.44371743686115, -4.9596620854277615, -2.6179938779914944)
+    dubinspath = DubinsPath(start3, goal3, 1.0, [], logging.getLogger(__name__))  # Curvature = 1.0
     
-    dubinspath = DubinsPath(start, goal, 1.0, [], logging.getLogger(__name__))  # Curvature = 1.0
-    
-    path = dubinspath.plan_path(start, goal)
+    path = dubinspath.plan_path(start3, goal3)
     
     print("Path points:")
     for i, point in enumerate(path):
         print(f"Point {i}: x={point[0]:.2f}, y={point[1]:.2f}, θ={math.degrees(point[2]):.2f}°")
     
     print(f"\nTotal path length: {len(path)} segments")
+
+    # Visualization
+    xs = [p[0] for p in path]
+    ys = [p[1] for p in path]
+    plt.figure(figsize=(8, 8))
+    plt.plot(xs, ys, 'bo-', label='Dubins Path')
+    plt.plot(start3[0], start3[1], 'go', markersize=10, label='Start')
+    plt.plot(goal3[0], goal3[1], 'ro', markersize=10, label='Goal')
+    plt.title('Dubins Path Visualization')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.axis('equal')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
 #if __name__ == '__main__':
-#    main()
+#   main()
