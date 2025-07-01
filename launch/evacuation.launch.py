@@ -218,7 +218,7 @@ def load_obstacles_from_yaml(yaml_path):
         tuple: (obstacles, map_bounds) where map_bounds is (x_min, x_max, y_min, y_max)
     """
     obstacles = []
-    map_bounds = (-10.0, 10.0, -5.0, 5.0) 
+    map_bounds = (-6.0, 6.0, -6.0, 6.0) 
     
     try:
         with open(yaml_path, 'r') as file:
