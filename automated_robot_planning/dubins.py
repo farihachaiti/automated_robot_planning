@@ -8,7 +8,7 @@ import logging
 import matplotlib.pyplot as plt
 
 class DubinsPath():
-    def __init__(self, start, end, curvature, robot_positions, map_bounds, obstacles, logger):
+    def __init__(self, start, end, curvature=None, robot_positions=None, map_bounds=None, obstacles=None, logger=None):
         # Define parameters
         self.turning_angle = math.pi/3
         self.min_turning_radius = 1.0/curvature
@@ -179,8 +179,8 @@ class DubinsPath():
                 end_x = center_x - self.min_turning_radius * math.sin(initial_heading + delta_theta)
                 end_y = center_y + self.min_turning_radius * math.cos(initial_heading + delta_theta)
                 end_theta = (current_point[2] + delta_theta) % (2 * math.pi)
-
-                current_point = np.array([end_x, end_y, end_theta])
+9
+                current_point = np.array([end_x, end_y, end_theta]) 
                 initial_heading += delta_theta
                 total_length += arc_length
 
@@ -273,19 +273,19 @@ class DubinsPath():
                 print("Could not find valid next step, path planning failed.")
                 break
             # Avoid repeated points
-            if self.close_enough(current_pos, new_pos, threshold=0.5):
+            if self.close_enough(current_pos, new_pos, threshold=0.05):
                 print("No progress made, path planning stuck.")
                 break
     
-            if check_valid(new_pos[0], new_pos[1]):
-                path.append(new_pos)
-                current_pos = new_pos
-            else: 
-                current_pos = new_pos
-                continue 
+            #if check_valid(new_pos[0], new_pos[1]):
+            #    path.append(new_pos)
+            #    current_pos = new_pos
+            #else: 
+            #    current_pos = new_pos
+            #    continue 
        
-            #path.append(new_pos)
-            #current_pos = new_pos
+            path.append(new_pos)
+            current_pos = new_pos
     
             steps += 1
             if steps >= max_steps:
@@ -445,7 +445,7 @@ def main():
     obstacles, map_bounds = load_obstacles_from_yaml()
     dubinspath = DubinsPath(start, goal, 2.0, [(-3.31, -5.42, -0.48), (-1.64, -7.46, -2.79), (1.87, -1.77, -1.41)], map_bounds, obstacles, logging.getLogger(__name__))  # Curvature = 1.0
    
-    path, smoothed_path = dubinspath.plan_path(start, goal)
+    path = dubinspath.plan_path(start, goal)
     
     print("Path points:")
     for i, point in enumerate(path):

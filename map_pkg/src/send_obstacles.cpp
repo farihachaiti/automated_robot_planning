@@ -58,7 +58,7 @@ public:
   {
     // Obstacle parameters
     try{
-      this->declare_parameter("n_obstacles", 2);
+      this->declare_parameter("n_obstacles", 3);
       this->declare_parameter("no_cylinders", false);
       this->declare_parameter("no_boxes", false);
       this->declare_parameter("min_size", 0.5);

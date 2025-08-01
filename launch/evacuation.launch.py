@@ -467,7 +467,7 @@ def spawn_shelfini(context):
             Node(
                 package='automated_robot_planning',
                 namespace=shelfino_name,
-                executable='dubins_node.py',
+                executable='robot_controller.py',
                 parameters=[
                     {'robot_positions': flat_robot_positions},
                     {'obstacles': flat_obstacles_str},
