@@ -242,12 +242,12 @@ async def main(args=None):
 
     # Wait for events after starting the spin task
     try:
-        await asyncio.gather(
-            #await controller.path_planner.robot_task_event.wait()
-            await controller.path_planner.path_published_event.wait()
-            await controller.path_planner.navigation_complete.wait()
 
-        )
+        #await controller.path_planner.robot_task_event.wait()
+        #await controller.path_planner.path_published_event.wait()
+        #await controller.path_planner.navigation_complete.wait()
+        #controller.path_planner.robot_task((controller.initial_x, controller.initial_y, controller.initial_yaw))
+
 
     except asyncio.CancelledError:
         pass

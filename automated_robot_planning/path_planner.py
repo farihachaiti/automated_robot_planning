@@ -28,12 +28,16 @@ class PathPlanner(Node):
         super().__init__('path_planner', namespace=robot_name)
         self.namespace = robot_name
         self.controller_node = controller_node   
+        self.raytrace_min_range = 0.0
+        self.raytrace_max_range = 3.0
+        self.costmap_resolution = 0.05
+        self.costmap_size = [3, 3]
         self.gate_position = gate_position 
         self.const_linear_velocity = [0.2, 0.0, 0.5]
         self.walls = [] 
         self.solid_obs = []
         self.q_goal = PoseStamped()
-        self.goal_point = []
+        self.goal_point = (0.0, 0.0, 0.0)
         self.q_goal, self.goal_point = self.calculate_goal_pose()
         self.robot = ObstacleDetector.polygon_offsetting(robot, 0.1, isRobot=True)
         self.safety_distance = 0.1
@@ -57,18 +61,39 @@ class PathPlanner(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL
         )
 
+        qos_profile_initial_pose = QoSProfile(
+            depth=20,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE
+        )
+        self.initial_pose_pub = self.create_publisher(PoseStamped, f'/{self.robot_name}/initialpose', qos_profile_initial_pose)
+
+        init_pose_msg = PoseWithCovarianceStamped()
+        init_pose_msg.header.frame_id = "map"
+        init_pose_msg.header.stamp = self.get_clock().now().to_msg()
+
+        # Set your desired initial position
+        init_pose_msg.pose.pose.position.x = self.start_pose[0]
+        init_pose_msg.pose.pose.position.y = self.start_pose[1]
+        init_pose_msg.pose.pose.position.z = 0.0
+        quat = tf2_ros.transformations.quaternion_from_euler(0, 0, self.start_pose[2])
+        init_pose_msg.pose.pose.orientation.x = quat[0]
+        init_pose_msg.pose.pose.orientation.y = quat[1]
+        init_pose_msg.pose.pose.orientation.z = quat[2]
+        init_pose_msg.pose.pose.orientation.w = quat[3]
 
 
-
+        self.initial_pose_pub.publish(init_pose_msg)
+        self.get_logger().info(f'Published initialpose: x={self.start_pose[0]}, y={self.start_pose[1]}, yaw={self.start_pose[2]}')
         self.create_subscription(
             OccupancyGrid,
-            f'/{self.namespace}/local_costmap/l_costmap_subscriber',
+            f'/{self.namespace}/local_costmap/costmap',
             self.local_costmap_callback,
             qos_profile)
         
         self.create_subscription(
             OccupancyGrid,
-            f'/{self.namespace}/global_costmap/g_costmap_subscriber',
+            f'/{self.namespace}/global_costmap/costmap',
             self.global_costmap_callback,
             qos_profile)
         
@@ -79,11 +104,11 @@ class PathPlanner(Node):
             self.obs_callback,
             qos_profile)
 
-        self.create_subscription(
+        '''self.create_subscription(
             PoseArray,
             f'/{self.namespace}/gate_position',
             self.gate_callback,
-            qos_profile)
+            qos_profile)'''
         
 
         self.create_subscription(
@@ -127,12 +152,12 @@ class PathPlanner(Node):
                 # Parse the URDF
         self.local_costmap_pub = self.create_publisher(
             OccupancyGrid,
-            f'/{self.namespace}/local_costmap/l_costmap_publisher',
+            f'/{self.namespace}/local_costmap/costmap',
             qos_profile)
         
         self.global_costmap_pub = self.create_publisher(
             OccupancyGrid,
-            f'/{self.namespace}/global_costmap/g_costmap_publisher',
+            f'/{self.namespace}/global_costmap/costmap',
             qos_profile)
 
         self.create_subscription(
@@ -225,9 +250,9 @@ class PathPlanner(Node):
 
 
             # Conditional publishing to global costmap
-            if self.should_update_global_costmap():
-                self.global_costmap_pub.publish(costmap_msg)
-                self.previous_global_costmap = self.costmap.copy()  # Update the previous costmap
+            #if self.should_update_global_costmap():
+            #    self.global_costmap_pub.publish(costmap_msg)
+            #    self.previous_global_costmap = self.costmap.copy()  # Update the previous costmap
         except Exception as e:
             self.get_logger().error(f"Laser Scan Callback failed: {e}")
 
@@ -284,6 +309,14 @@ class PathPlanner(Node):
             self.get_logger().info('Received local costmap')
             #self.process_costmap(msg)
             PathPlanner.costmap = msg
+            self.costmap_origin = (msg.info.origin.position.x, msg.info.origin.position.y)
+            self.costmap_resolution = msg.info.resolution
+            self.costmap_width = msg.info.width
+            self.costmap_height = msg.info.height
+            self.costmap_size = (self.costmap_width, self.costmap_height)
+            self.costmap_data = np.array(msg.data, dtype=np.int8).reshape((self.costmap_height, self.costmap_width))
+            self.costmap_data = self.costmap_data.T
+            self.costmap_data = self.costmap_data[::-1]
         except Exception as e:
             self.get_logger().error(f"Local Costmap Callback failed: {e}")
 
@@ -352,16 +385,13 @@ class PathPlanner(Node):
         goal_pose.header.stamp = self.get_clock().now().to_msg()
         goal_pose.pose.position.x = self.gate_position.position.x
         goal_pose.pose.position.y = self.gate_position.position.y
-        goal_pose.pose.position.z = 0.0  # Assuming robot approaches gate at ground level
-        yaw = self.gate_position.orientation.w
-        quat = tf2_ros.transformations.quaternion_from_euler(0, 0, yaw)
-        goal_pose.pose.orientation.x = quat[0]
-        goal_pose.pose.orientation.y = quat[1]
-        goal_pose.pose.orientation.z = quat[2]
-        goal_pose.pose.orientation.w = quat[3]
-        #matrix = tf2_ros.transformations.quaternion_matrix([goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z, goal_pose.pose.orientation.w])
-        #rpy = tf2_ros.transformations.euler_from_matrix(matrix)
-        return goal_pose, [self.gate_position.position.x, self.gate_position.position.y, yaw]
+        goal_pose.pose.position.z = self.gate_position.position.z
+        goal_pose.pose.orientation.x = self.gate_position.orientation.x
+        goal_pose.pose.orientation.y = self.gate_position.orientation.y
+        goal_pose.pose.orientation.z = self.gate_position.orientation.z
+        goal_pose.pose.orientation.w = self.gate_position.orientation.w 
+        _, _, yaw = tf2_ros.transformations.euler_from_quaternion([goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z, goal_pose.pose.orientation.w])
+        return goal_pose, (self.gate_position.position.x, self.gate_position.position.y, yaw)
 
 
 
@@ -611,7 +641,7 @@ class PathPlanner(Node):
             new_node = q_random
         
         
-        return new_node
+        return tuple(new_node)
 
 
     def rewire(self, near_nodes, idx, q_new):
@@ -650,9 +680,9 @@ class PathPlanner(Node):
     def get_trajectory(self, q_goal, graph, robot):        
         q_init = graph[0]
         while self.get_cost(q_goal, q_init)>0.3:        
-            q_random = [np.random.uniform(q_goal[0]-0.5, q_goal[0]+0.5), 
+            q_random = (np.random.uniform(q_goal[0]-0.5, q_goal[0]+0.5), 
                         np.random.uniform(q_goal[1]-0.5, q_goal[1]+0.5),
-                        np.random.uniform(q_goal[2]-0.5, q_goal[2]+0.5)]    
+                        np.random.uniform(q_goal[2]-0.5, q_goal[2]+0.5))    
             #if self.get_mul_cost(q_random, self.solid_obs)>self.robot_size and self.get_cost(q_random, self.robot_coords)>self.robot_size  and self.get_cost(q_random, self.walls)>self.robot_size:
             if not self.is_in_free_space(q_random):
                 continue
