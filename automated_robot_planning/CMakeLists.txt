@@ -25,11 +25,12 @@ find_package(shelfino_node REQUIRED)
 # Install Python modules
 ament_python_install_package(${PROJECT_NAME})
 
+# Install Python scripts with executable permissions
 install(PROGRAMS
-${PROJECT_NAME}/robot_controller.py
-${PROJECT_NAME}/QosBridge.py
-#${PROJECT_NAME}/dubins_node.py
+  ${PROJECT_NAME}/path_planner.py
+  ${PROJECT_NAME}/QosBridge.py
   DESTINATION lib/${PROJECT_NAME}
+  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
 

@@ -6,6 +6,7 @@ import os
 import yaml
 import logging
 import matplotlib.pyplot as plt
+import tf_transformations
 
 class DubinsPath():
     def __init__(self, start, end, curvature=None, robot_positions=None, map_bounds=None, obstacles=None, logger=None):
@@ -179,7 +180,7 @@ class DubinsPath():
                 end_x = center_x - self.min_turning_radius * math.sin(initial_heading + delta_theta)
                 end_y = center_y + self.min_turning_radius * math.cos(initial_heading + delta_theta)
                 end_theta = (current_point[2] + delta_theta) % (2 * math.pi)
-9
+
                 current_point = np.array([end_x, end_y, end_theta]) 
                 initial_heading += delta_theta
                 total_length += arc_length
@@ -211,7 +212,10 @@ class DubinsPath():
         return tuple(current_point), total_length, ''.join(segment_type)
 
     def close_enough(self, config1, config2, threshold=0.05):
+        #print(config1)
+        #print(config2)
         position_diff = math.sqrt((config1[0]-config2[0])**2 + (config1[1]-config2[1])**2)
+        
         angle_diff = min(abs(config1[2]-config2[2]), 2*math.pi - abs(config1[2]-config2[2]))
         return position_diff <= threshold and angle_diff <= math.radians(threshold*100)
 
@@ -227,7 +231,7 @@ class DubinsPath():
         
       
         # Use a reasonable threshold for convergence
-        threshold = 1.0
+        threshold = 50.05
         step_size = 2 * self.min_turning_radius
         min_step_size = 0.5  # You can adjust this value
 
@@ -250,7 +254,8 @@ class DubinsPath():
             return True
 
         print(f"Starting path planning from {start} to {goal}")
-        while not self.close_enough(current_pos, goal, threshold):
+        
+        while not self.close_enough(current_pos, goal, 0.05):
             # Update path parameters
             last_distance = self.get_distance(current_pos, goal)
             self.initial_heading = self.get_initial_heading(current_pos, goal)
@@ -291,7 +296,7 @@ class DubinsPath():
             if steps >= max_steps:
                 print("Maximum steps reached, stopping path planning.")
                 break
-
+        print(self.close_enough(current_pos, goal, 0.05))
         print(f"Path planning finished after {steps} steps. Path length: {len(path)}")
         if len(path) < 2:
             smoothed_path = path
@@ -435,6 +440,11 @@ def load_obstacles_from_yaml():
         ) / 2.0
     return obstacles, map_bounds
 
+    
+
+
+
+
 def main():
     start = (-3.31, -5.42, -0.48)  # Fixed typo in y value
     start2 = (3.14, 1.42, 1.71)
@@ -442,10 +452,12 @@ def main():
     goal = (-3.086493, -8.060254, -1.570796)
     start3 = (-3.530316241159565, 3.164402679769098, -2.4564637764115815)
     goal3 = (-6.44371743686115, -4.9596620854277615, -2.6179938779914944)
-    obstacles, map_bounds = load_obstacles_from_yaml()
-    dubinspath = DubinsPath(start, goal, 2.0, [(-3.31, -5.42, -0.48), (-1.64, -7.46, -2.79), (1.87, -1.77, -1.41)], map_bounds, obstacles, logging.getLogger(__name__))  # Curvature = 1.0
+    #obstacles, map_bounds = load_obstacles_from_yaml()
+    path_planner = PathPlanner(start, goal)
+    path = path_planner.robot_task(start)
+    #dubinspath = DubinsPath(start, goal, 2.0, [(-3.31, -5.42, -0.48), (-1.64, -7.46, -2.79), (1.87, -1.77, -1.41)], map_bounds, obstacles, logging.getLogger(__name__))  # Curvature = 1.0
    
-    path = dubinspath.plan_path(start, goal)
+    #path = dubinspath.plan_path(start, goal)
     
     print("Path points:")
     for i, point in enumerate(path):

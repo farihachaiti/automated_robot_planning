@@ -16,6 +16,8 @@ import math
 from rcl_interfaces.msg import ParameterDescriptor
 from rcl_interfaces.msg import ParameterType
 from rclpy.parameter import Parameter
+from automated_robot_planning.path_planner import PathPlanner
+
 
 class RobotController(Node):
     def __init__(self):
@@ -61,6 +63,21 @@ class RobotController(Node):
         self.start_pose.pose.orientation.z = q[2]
         self.start_pose.pose.orientation.w = q[3]
 
+        self.gate_pose_pub = self.create_publisher(
+            PoseStamped,
+            'goal_pose',
+            QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                depth=1
+            )
+        )
+        
+        # Initialize gate positions
+        self.gate_positions = None
+        self.goal_pose = None
+        
+        # Subscribe to gate positions
         self.gate_sub = self.create_subscription(
             PoseArray,
             '/gate_position',
@@ -68,14 +85,9 @@ class RobotController(Node):
             QoSProfile(
                 reliability=ReliabilityPolicy.RELIABLE,
                 durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                depth=1
+                depth=10
             )
         )
-        self.goal_pose = None
-        self.gate_positions = None
-
-
-
         #self.plan_timer = self.create_timer(1.0, self.try_plan)
 
         self.get_logger().info('RobotController node started.')
@@ -119,7 +131,7 @@ class RobotController(Node):
         # Convert gate_pose to (x, y, theta) for Dubins path
 
         #self.try_plan()
-
+        self.path_planner.robot_task((self.initial_x, self.initial_y, self.initial_yaw))
 
     def try_plan(self):
         self.get_logger().info('try_plan called')
@@ -233,20 +245,33 @@ async def spin_ros_node(node, interval=0.01):
 async def main(args=None):
     rclpy.init(args=args)
     controller = RobotController()
-
-    controller.path_planner = PathPlanner(controller, controller.robot_name, (controller.initial_x, controller.initial_y, controller.initial_yaw),controller.gate_positions.poses[0])
-    #controller.obstacle_detector = ObstacleDetector()
     controller.loop = asyncio.get_running_loop()  # Store the main event loop in the node
+    
     # Start spinning in asyncio
     spin_task = asyncio.create_task(spin_ros_node(controller))
+    
+    # Wait for gate positions to be received
+    controller.get_logger().info('Waiting for gate positions...')
+    while controller.gate_positions is None and rclpy.ok():
+        await asyncio.sleep(0.1)
+    
+    if not rclpy.ok():
+        return
+        
+    controller.get_logger().info(f'Received gate positions, initializing PathPlanner...')
+    controller.path_planner = PathPlanner(
+        controller, 
+        controller.robot_name, 
+        (controller.initial_x, controller.initial_y, controller.initial_yaw),
+        controller.gate_positions.poses[0]  # Now gate_positions should be available
+    )
 
     # Wait for events after starting the spin task
     try:
-
-        #await controller.path_planner.robot_task_event.wait()
-        #await controller.path_planner.path_published_event.wait()
-        #await controller.path_planner.navigation_complete.wait()
-        #controller.path_planner.robot_task((controller.initial_x, controller.initial_y, controller.initial_yaw))
+        await controller.path_planner.robot_task_event.wait()
+        await controller.path_planner.path_published_event.wait()
+        await controller.path_planner.navigation_complete.wait()
+        await controller.path_planner.robot_task((controller.initial_x, controller.initial_y, controller.initial_yaw))
 
 
     except asyncio.CancelledError:

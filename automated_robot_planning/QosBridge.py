@@ -12,6 +12,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDur
 from rclpy.clock import ClockType
 import time
 from geometry_msgs.msg import PoseWithCovarianceStamped
+import tf_transformations
 
 class QoSBridge(Node):
     def __init__(self, namespace=''):
@@ -69,13 +70,13 @@ class QoSBridge(Node):
         )
 
         # Scan topic bridge
-        self.scan_publisher = self.create_publisher(LaserScan, 'scan', pub_qos)
-        self.scan_subscription = self.create_subscription(
+        #self.scan_publisher = self.create_publisher(LaserScan, 'scan', pub_qos)
+        '''self.scan_subscription = self.create_subscription(
             LaserScan,
             'scan',
             self.scan_callback,
             sub_qos
-        )
+        )'''
 
         # Odometry topic bridge
         self.odom_publisher = self.create_publisher(Odometry, 'odom', pub_qos)
@@ -87,26 +88,33 @@ class QoSBridge(Node):
         )
 
         # TF topic bridge
-        #self.tf_publisher = self.create_publisher(TFMessage, '/tf', tf_pub_qos)
-        #self.tf_subscription = self.create_subscription(
-        #    TFMessage,
-        #    '/tf',
-        #    self.tf_callback,
-        #    tf_sub_qos
-        #)
+        self.tf_publisher = self.create_publisher(TFMessage, '/tf', tf_pub_qos)
+        self.tf_subscription = self.create_subscription(
+            TFMessage,
+            '/tf',
+            self.tf_callback,
+            tf_sub_qos
+        )
 
         # TF static topic bridge
-        #self.tf_static_publisher = self.create_publisher(TFMessage, '/tf_static', tf_pub_qos)
-        #self.tf_static_subscription = self.create_subscription(
-        #    TFMessage,
-        #    '/tf_static',
-        #    self.tf_static_callback,
-        #    tf_sub_qos
-        #)
+        self.tf_static_publisher = self.create_publisher(TFMessage, '/tf_static', tf_pub_qos)
+        self.tf_static_subscription = self.create_subscription(
+            TFMessage,
+            '/tf_static',
+            self.tf_static_callback,
+            tf_sub_qos
+        )
 
-        # Publisher for initialpose
-        self.initialpose_publisher = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', 10)
-        self.publish_initial_pose()
+        # Publisher for initialpose - using BEST_EFFORT to match amcl's subscription
+        qos_profile_initial_pose = QoSProfile(
+            depth=20,
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,  # Changed to match amcl's subscription
+            durability=QoSDurabilityPolicy.VOLATILE,
+            history=QoSHistoryPolicy.KEEP_LAST
+        )
+        self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped, 'initialpose', qos_profile_initial_pose)
+        # Add this after creating self.initial_pose_pub
+        self.create_timer(1.0, self.publish_initial_pose)  # Publish every seconself.publish_initial_pose()
 
         self.get_logger().info(f'QoS Bridge initialized with TF timing validation (tolerance: {self.tf_tolerance}s)')
         self.get_logger().info(f'Timestamp validation: {self.enable_timestamp_validation}, Timestamp correction: {self.enable_timestamp_correction}')
@@ -188,56 +196,54 @@ class QoSBridge(Node):
             self.get_logger().error(f'Error in odom callback: {str(e)}')
 
 
-    #def tf_callback(self, msg):
-    #    """Handle TF messages with timing validation."""
-    #    try:
-    #        if not self.validate_tf_timestamp(msg):
-    #            updated_msg = self.update_tf_timestamps(msg)
-    #            self.tf_publisher.publish(updated_msg)
-    #        else:
-    #            self.tf_publisher.publish(msg)
-    #            
-    #    except Exception as e:
-    #        self.get_logger().error(f'Error in TF callback: {str(e)}')
+    def tf_callback(self, msg):
+        """Handle TF messages with timing validation."""
+        try:
+            if not self.validate_tf_timestamp(msg):
+                updated_msg = self.update_tf_timestamps(msg)
+                self.tf_publisher.publish(updated_msg)
+            else:
+                self.tf_publisher.publish(msg)
+            
+        except Exception as e:
+            self.get_logger().error(f'Error in TF callback: {str(e)}')
 
-    #def tf_static_callback(self, msg):
-    #    """Handle static TF messages with timing validation"""
-    #    try:
+    def tf_static_callback(self, msg):
+        """Handle static TF messages with timing validation"""
+        try:
             # For static transforms, we can be more lenient with timing
             # but still validate to prevent very old data
-    #        if not self.validate_tf_timestamp(msg):
+            if not self.validate_tf_timestamp(msg):
                 # Update timestamps for static transforms too
-    #            updated_msg = self.update_tf_timestamps(msg)
-    #            self.tf_static_publisher.publish(updated_msg)
-    #            self.get_logger().debug('Published static TF with updated timestamps')
-    #        else:
-    #            self.tf_static_publisher.publish(msg)
-    #            
-    #    except Exception as e:
-    #        self.get_logger().error(f'Error in static TF callback: {str(e)}')
+                updated_msg = self.update_tf_timestamps(msg)
+                self.tf_static_publisher.publish(updated_msg)
+                self.get_logger().debug('Published static TF with updated timestamps')
+            else:
+                self.tf_static_publisher.publish(msg)
+                
+        except Exception as e:
+            self.get_logger().error(f'Error in static TF callback: {str(e)}')
 
     def publish_initial_pose(self):
-        msg = PoseWithCovarianceStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'map'
-        msg.pose.pose.position.x = float(self.initial_x)
-        msg.pose.pose.position.y = float(self.initial_y)
-        msg.pose.pose.position.z = 0.0
-        # Convert yaw to quaternion
-        yaw = float(self.initial_yaw)
-        qz = math.sin(yaw * 0.5)
-        qw = math.cos(yaw * 0.5)
-        msg.pose.pose.orientation.x = 0.0
-        msg.pose.pose.orientation.y = 0.0
-        msg.pose.pose.orientation.z = qz
-        msg.pose.pose.orientation.w = qw
-        # Set covariance (default values)
-        msg.pose.covariance = [0.0]*36
-        msg.pose.covariance[0] = 0.25  # x
-        msg.pose.covariance[7] = 0.25  # y
-        msg.pose.covariance[35] = 0.06853891945200942  # yaw
-        self.initialpose_publisher.publish(msg)
-        self.get_logger().info(f'Published initialpose: x={self.initial_x}, y={self.initial_y}, yaw={self.initial_yaw}')
+        
+
+        init_pose_msg = PoseWithCovarianceStamped()
+        init_pose_msg.header.frame_id = "map"
+        init_pose_msg.header.stamp = self.get_clock().now().to_msg()
+
+        # Set your desired initial position
+        init_pose_msg.pose.pose.position.x = self.initial_x
+        init_pose_msg.pose.pose.position.y = self.initial_y
+        init_pose_msg.pose.pose.position.z = 0.0
+        quat = tf_transformations.quaternion_from_euler(0, 0, self.initial_yaw)
+        init_pose_msg.pose.pose.orientation.x = quat[0]
+        init_pose_msg.pose.pose.orientation.y = quat[1]
+        init_pose_msg.pose.pose.orientation.z = quat[2]
+        init_pose_msg.pose.pose.orientation.w = quat[3]
+
+
+        self.initial_pose_pub.publish(init_pose_msg)
+
 
 def main(args=None):
     rclpy.init(args=args)

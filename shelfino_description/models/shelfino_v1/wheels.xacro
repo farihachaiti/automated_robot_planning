@@ -47,8 +47,7 @@
       <material>Gazebo/Black</material>
       <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
         <topic>shelfino${robot_id}/joint_states</topic>
-        <update_rate>100</update_rate>
-        <joint_name>shelfino${robot_id}/${prefix}_wheel_joint</joint_name>
+        <joint_name>${prefix}_wheel_joint</joint_name>
       </plugin>
     </gazebo>
 

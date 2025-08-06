@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
+import threading
 import rclpy
 from rclpy.node import Node
-from automated_robot_planning.obstacle_detector import ObstacleDetector
+#from automated_robot_planning.obstacle_detector import ObstacleDetector
 import math
 import dubins
 import numpy as np
@@ -14,45 +15,67 @@ from obstacles_msgs.msg import ObstacleArrayMsg
 from visualization_msgs.msg import MarkerArray
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 import xacro
-from urdf_parser_py.urdf import URDF
+#from urdf_parser_py.urdf import URDF
 from tf2_msgs.msg import TFMessage
 from sensor_msgs.msg import JointState
-from nav_msgs.msg import Path
+from nav_msgs.msg import Path, Odometry
+import tf_transformations
+import tf2_ros
+from nav2_msgs.action import FollowPath
+from rclpy.action import ActionClient
+from nav_msgs.msg import OccupancyGrid
+from sensor_msgs.msg import LaserScan
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from geometry_msgs.msg import TransformStamped
 
 
 collision_detected = False
 
 
 class PathPlanner(Node): 
-    def __init__(self, controller_node, robot_name, start_pose, gate_position):
-        super().__init__('path_planner', namespace=robot_name)
+    def __init__(self):
+        super().__init__('path_planner')
+        self.declare_parameter('robot_name', 'shelfino0')
+        robot_name = self.get_parameter('robot_name').get_parameter_value().string_value.strip().rstrip('/')
         self.namespace = robot_name
-        self.controller_node = controller_node   
+        #self.controller_node = controller_node   
         self.raytrace_min_range = 0.0
         self.raytrace_max_range = 3.0
         self.costmap_resolution = 0.05
         self.costmap_size = [3, 3]
-        self.gate_position = gate_position 
+        #self.gate_position = gate_position 
         self.const_linear_velocity = [0.2, 0.0, 0.5]
         self.walls = [] 
         self.solid_obs = []
         self.q_goal = PoseStamped()
         self.goal_point = (0.0, 0.0, 0.0)
-        self.q_goal, self.goal_point = self.calculate_goal_pose()
-        self.robot = ObstacleDetector.polygon_offsetting(robot, 0.1, isRobot=True)
+        
+        #self.robot = ObstacleDetector.polygon_offsetting(robot, 0.1, isRobot=True)
         self.safety_distance = 0.1
         self.obstacle_threshold = 1
         self.robot_id = None
         PathPlanner.costmap = None
         PathPlanner.g_costmap = None
-        self.start_pose = start_pose
-        self.navigation_complete = asyncio.Event()
-        self.path_published_event = asyncio.Event()
-        #self.robot_task_event = asyncio.Event()
+        self.declare_parameter('initial_x', 0.0)
+        self.declare_parameter('initial_y', 0.0)
+        self.declare_parameter('initial_yaw', 0.0)
 
-        self.path_pub = self.create_publisher(Path, f'/{self.robot_name}/plan1', 10)
-        self.follow_path_client = ActionClient(self, FollowPath, f'/{self.robot_name}/follow_path')
+        self.initial_x = self.get_parameter('initial_x').value
+        self.initial_y = self.get_parameter('initial_y').value
+        self.initial_yaw = self.get_parameter('initial_yaw').value
 
+        self.navigation_complete = threading.Event()
+        
+        # Initialize TF broadcaster
+        '''self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+        self.current_pose = None
+        
+        # Create a timer to publish TF at 50Hz (20ms)
+        self.tf_timer = self.create_timer(0.02, self.publish_tf)  # 50Hz'''
+
+        self.path_pub = self.create_publisher(Path, f'/{self.namespace}/plan', 10)
+        self.follow_path_client = ActionClient(self, FollowPath, f'/{self.namespace}/follow_path')
+        self.plan_timer = self.create_timer(1.0, self.robot_task)
 
         # Define QoS profile for the publisher
         qos_profile = QoSProfile(
@@ -61,30 +84,8 @@ class PathPlanner(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL
         )
 
-        qos_profile_initial_pose = QoSProfile(
-            depth=20,
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE
-        )
-        self.initial_pose_pub = self.create_publisher(PoseStamped, f'/{self.robot_name}/initialpose', qos_profile_initial_pose)
 
-        init_pose_msg = PoseWithCovarianceStamped()
-        init_pose_msg.header.frame_id = "map"
-        init_pose_msg.header.stamp = self.get_clock().now().to_msg()
-
-        # Set your desired initial position
-        init_pose_msg.pose.pose.position.x = self.start_pose[0]
-        init_pose_msg.pose.pose.position.y = self.start_pose[1]
-        init_pose_msg.pose.pose.position.z = 0.0
-        quat = tf2_ros.transformations.quaternion_from_euler(0, 0, self.start_pose[2])
-        init_pose_msg.pose.pose.orientation.x = quat[0]
-        init_pose_msg.pose.pose.orientation.y = quat[1]
-        init_pose_msg.pose.pose.orientation.z = quat[2]
-        init_pose_msg.pose.pose.orientation.w = quat[3]
-
-
-        self.initial_pose_pub.publish(init_pose_msg)
-        self.get_logger().info(f'Published initialpose: x={self.start_pose[0]}, y={self.start_pose[1]}, yaw={self.start_pose[2]}')
+        #self.get_logger().info(f'Published initialpose: x={self.start_pose[0]}, y={self.start_pose[1]}, yaw={self.start_pose[2]}')
         self.create_subscription(
             OccupancyGrid,
             f'/{self.namespace}/local_costmap/costmap',
@@ -97,78 +98,24 @@ class PathPlanner(Node):
             self.global_costmap_callback,
             qos_profile)
         
-
-        self.create_subscription(
-            ObstacleArrayMsg,
-            f'/{self.namespace}/obstacles',
-            self.obs_callback,
-            qos_profile)
-
-        '''self.create_subscription(
+        self.gate_sub = self.create_subscription(
             PoseArray,
-            f'/{self.namespace}/gate_position',
-            self.gate_callback,
-            qos_profile)'''
-        
-
-        self.create_subscription(
-            Polygon,
-            f'/{self.namespace}/map_borders',
-            self.wall_callback,
-            qos_profile)
-
-        self.tf_pub = self.create_publisher(
-            TFMessage, 
-            f'/{self.namespace}/tf_publisher', 
+            '/gate_position',
+            self.gate_position_callback,
             QoSProfile(
-                depth=20,
-                durability=DurabilityPolicy.VOLATILE,
                 reliability=ReliabilityPolicy.RELIABLE,
-            ))
-        
-        self.plan_pub = self.create_publisher(
-            Path,
-            f'/{self.namespace}/received_global_plan',
-            qos_profile) 
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                depth=10
+            )
+        )
 
-        self.waypoint_pub = self.create_publisher(
-            MarkerArray,
-            f'/{self.namespace}/waypoints',
-            qos_profile)
-        
-        self.joint_state_pub = self.create_publisher(
-            JointState, 
-            f'/{self.namespace}/joint_states_publisher', 
-            qos_profile)
-        
+        self.goal_pose_publisher = self.create_publisher(PoseStamped, f'/{self.namespace}/goal_pose', 10)
         self.cmd_vel_publisher = self.create_publisher(
             Twist, 
             f'/{self.namespace}/cmd_vel', 
             10)
 
-        # Create timers to run tasks every 1 second
-        self.create_timer(0.1, self.spinner)
-
-                # Parse the URDF
-        self.local_costmap_pub = self.create_publisher(
-            OccupancyGrid,
-            f'/{self.namespace}/local_costmap/costmap',
-            qos_profile)
         
-        self.global_costmap_pub = self.create_publisher(
-            OccupancyGrid,
-            f'/{self.namespace}/global_costmap/costmap',
-            qos_profile)
-
-        self.create_subscription(
-            LaserScan,
-            f'/{self.namespace}/scan',
-            self.laser_scan_callback,
-            QoSProfile(
-                depth=20,
-                durability=DurabilityPolicy.VOLATILE,
-                reliability=ReliabilityPolicy.RELIABLE,
-            ))
         self.odom_sub = self.create_subscription(
             Odometry,
             f'/{self.namespace}/odom',
@@ -176,42 +123,144 @@ class PathPlanner(Node):
             10
         )
 
+    def gate_position_callback(self, msg):
+        """Process incoming gate position data"""
+        #self.gate_positions = msg
+        self.get_logger().info(f'Received {len(msg.poses)} gate positions')
+        self.gate_position = msg.poses[0]
+        self.get_logger().info(f'Gate position: x={self.gate_position.position.x}, y={self.gate_position.position.y}')   
+        self.q_goal, self.goal_point = self.calculate_goal_pose()   
+        # Create goal pose from the first gate position
+        
+        self.goal_pose_publisher.publish(self.q_goal)
+        self.get_logger().info('Published goal to /shelfino0/goal_pose')
+        self.get_logger().info(f'Goal position: x={self.q_goal.pose.position.x}, y={self.q_goal.pose.position.y}')
+        self.get_logger().debug(f"Starting robot_task with initial pose: {self.initial_x}, {self.initial_y}, {self.initial_yaw}")
+        in_pose = (self.initial_x, self.initial_y, self.initial_yaw)
+        #try:
+        graph = [in_pose]
+        self.parents = {graph[0]: None} 
+        path = Path()
+        path.header.frame_id = "map"
+        path.header.stamp = self.get_clock().now().to_msg()
+        
+        self.get_logger().debug(f"Planning trajectory to goal: {self.goal_point}")
+        graph = self.get_trajectory(self.goal_point, graph)
+        self.get_logger().debug(f"Generated trajectory with {len(graph)} points")
+        
+        #waypoints_list, segments = self.get_waypoints(in_pose, graph)
+        for i in range(len(graph) - 1):
+            start = graph[i]
+            end = graph[i + 1]
+            self.get_logger().debug(f"Processing segment {i+1}/{len(graph)-1}: {start} -> {end}")
+            
+            dubins_path = DubinsPath(start, end, 0.5)   
+            local_path = dubins_path.plan_path(start, end)
+            self.get_logger().debug(f"Planned Dubins path with {len(local_path[0]) if local_path and len(local_path) > 0 else 0} points")
+            
+            self.publish_velocities(local_path[0], local_path[1])
+            
+            pose = PoseStamped()
+            pose.header.frame_id = "map"
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.pose.position.x = local_path[0]
+            pose.pose.position.y = local_path[1]
+            pose.pose.position.z = 0.0
+            
+            yaw = self.yaw_from_two_points(start[0], start[1], end[0], end[1])
+            quat = tf_transformations.quaternion_from_euler(0, 0, yaw)
+            pose.pose.orientation.x = quat[0]
+            pose.pose.orientation.y = quat[1]
+            pose.pose.orientation.z = quat[2]
+            pose.pose.orientation.w = quat[3]
+            
+            #self.publish_joint_state(pose)
+            #tf_msg = TFMessage()
+            #tf_msg.transforms.append(self.get_transform(pose))
+            #self.tf_pub.publish(tf_msg)
+            path.poses.append(pose)
+            
+        self.get_logger().debug(f"Publishing path with {len(path.poses)} poses")
+        if hasattr(self, 'plan_timer') and self.plan_timer is not None:
+            self.plan_timer.cancel()
+            self.plan_timer = None 
+        self.path_pub.publish(path)
+        self.path_published_event.set()
+        
+        self.get_logger().info("Sending path to follow action server")
+        success = self.send_follow_path_goal(path)
+        self.get_logger().info(f'Published global plan with {len(path.poses)} poses')
+        self.get_logger().debug(f'Path details: {path}')
+            #waypoints = self.create_waypoints(waypoints_list)
+            #self.controller_node.follow_pth(shelfino.client, waypoints)
+            #print(graph)
+            
+            #self.robot_task_event.set()
+                              
+        '''except Exception as e:
+            self.get_logger().error(f"Task of Robot {self.get_namespace()} failed: {e}", exc_info=True)
+            raise''' 
+
     def odom_callback(self, msg: Odometry):
-        yaw = self.yaw_from_two_points(msg.pose.pose.position.x, msg.pose.pose.position.y)
+        _, _, yaw = tf_transformations.euler_from_quaternion([msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w])
         self.get_current_pos_and_or = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw) # geometry_msgs/Pose
 
     def send_follow_path_goal(self, path_msg, max_retries=3):
         for attempt in range(max_retries):
-            # Wait for the action server to be available
-            if self.follow_path_client.wait_for_server(timeout_sec=5.0):
-                
-                #for attempt in range(max_retries):
+            try:
+                # Wait for the action server to become available
+                if not self.follow_path_client.wait_for_server(timeout_sec=5.0):
+                    self.get_logger().warn(f'Action server not available, attempt {attempt + 1}/{max_retries}')
+                    time.sleep(1.0)
+                    continue
+
+                self.get_logger().info('Action server is available')
+
+                # Create goal message
                 goal_msg = FollowPath.Goal()
                 goal_msg.path = path_msg
                 goal_msg.controller_id = "FollowPath"
                 goal_msg.goal_checker_id = "simple_goal_checker"
                 goal_msg.progress_checker_id = "simple_progress_checker"
-                self.get_logger().info('Action server is available')
-                send_goal_future = self.follow_path_client.send_goal_async(goal_msg)
+
                 self.get_logger().info('Sending path to FollowPath action server')
-                goal_handle = await send_goal_future
+
+                # Send goal and wait synchronously for it to be sent
+                send_goal_future = self.follow_path_client.send_goal_async(goal_msg)
+                rclpy.spin_until_future_complete(self, send_goal_future)
+                goal_handle = send_goal_future.result()
 
                 if not goal_handle.accepted:
                     self.get_logger().error('FollowPath goal rejected!')
+                    time.sleep(1.0)
                     continue
-                
-                else:
-                    self.get_logger().info('FollowPath goal accepted, waiting for result...')
-                    result_future = goal_handle.get_result_async()
-                    result = await result_future
-                self.get_logger().info(f'FollowPath result: {result.status}')
-                self.get_logger().info(f"FollowPath result code: {result.result.error_code}")
-                self.get_logger().info(f"Error string: {result.result.error_string}")
-                self.navigation_complete.set()
-            break
+
+                self.get_logger().info('FollowPath goal accepted, waiting for result...')
+
+                # Wait synchronously for the result
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result()
+
+                if result:
+                    self.get_logger().info(f'FollowPath result: {result.status}')
+                    if hasattr(result, 'result') and hasattr(result.result, 'error_code'):
+                        self.get_logger().info(f"FollowPath result code: {result.result.error_code}")
+                        self.get_logger().info(f"Error string: {result.result.error_string}")
+
+                return True
+
+            except Exception as e:
+                self.get_logger().error(f'Error in send_follow_path_goal: {str(e)}')
+                time.sleep(1.0)
+
+        self.get_logger().error('Failed to send follow path goal after maximum retries')
+        return False
+
+
         
         
-    def laser_scan_callback(self, msg):
+    '''def laser_scan_callback(self, msg):
         # Process laser scan data to detect obstacles
         try:
             print('hi', msg)
@@ -241,7 +290,7 @@ class PathPlanner(Node):
             costmap_msg.info.height = self.costmap_size[1]
             costmap_msg.info.origin.position.x = - (self.costmap_size[0] * self.costmap_resolution) / 2
             costmap_msg.info.origin.position.y = - (self.costmap_size[1] * self.costmap_resolution) / 2
-            costmap_msg.info.origin.position.z = 0
+            costmap_msg.info.origin.position.z = 0.0
             costmap_msg.info.origin.orientation.w = 1.0
             costmap_msg.data = self.costmap.flatten().tolist()
             
@@ -254,7 +303,7 @@ class PathPlanner(Node):
             #    self.global_costmap_pub.publish(costmap_msg)
             #    self.previous_global_costmap = self.costmap.copy()  # Update the previous costmap
         except Exception as e:
-            self.get_logger().error(f"Laser Scan Callback failed: {e}")
+            self.get_logger().error(f"Laser Scan Callback failed: {e}")'''
 
 
     def should_update_global_costmap(self):
@@ -305,7 +354,7 @@ class PathPlanner(Node):
 
     def local_costmap_callback(self, msg):
         try:
-            print('hi', msg)
+
             self.get_logger().info('Received local costmap')
             #self.process_costmap(msg)
             PathPlanner.costmap = msg
@@ -314,16 +363,15 @@ class PathPlanner(Node):
             self.costmap_width = msg.info.width
             self.costmap_height = msg.info.height
             self.costmap_size = (self.costmap_width, self.costmap_height)
-            self.costmap_data = np.array(msg.data, dtype=np.int8).reshape((self.costmap_height, self.costmap_width))
-            self.costmap_data = self.costmap_data.T
-            self.costmap_data = self.costmap_data[::-1]
+            data = np.array(msg.data, dtype=np.int8).reshape((self.costmap_height, self.costmap_width))
+            self.local_costmap = data   
         except Exception as e:
             self.get_logger().error(f"Local Costmap Callback failed: {e}")
 
 
     def global_costmap_callback(self, msg):
         try:
-            print('hi', msg)
+    
             self.get_logger().info('Received global costmap')
             #self.process_costmap(msg)
             PathPlanner.g_costmap = msg
@@ -377,7 +425,7 @@ class PathPlanner(Node):
                 if distance < self.safety_distance or not self.is_clear(robot, self.solid_obs, self.walls):
                     self.get_logger().info('Obstacle too close! Changing direction...')
                     collision_detected = True
-                    self.manage_collision(self.robot_task, robot)
+                    self.manage_collision(self.robot_task)
 
     def calculate_goal_pose(self):
         goal_pose = PoseStamped()
@@ -390,7 +438,7 @@ class PathPlanner(Node):
         goal_pose.pose.orientation.y = self.gate_position.orientation.y
         goal_pose.pose.orientation.z = self.gate_position.orientation.z
         goal_pose.pose.orientation.w = self.gate_position.orientation.w 
-        _, _, yaw = tf2_ros.transformations.euler_from_quaternion([goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z, goal_pose.pose.orientation.w])
+        _, _, yaw = tf_transformations.euler_from_quaternion([goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z, goal_pose.pose.orientation.w])
         return goal_pose, (self.gate_position.position.x, self.gate_position.position.y, yaw)
 
 
@@ -459,12 +507,12 @@ class PathPlanner(Node):
         path = [start]
         segments = []
      
-            dubins_path = DubinsPath(start, end, 0.5)   
-            # Get path segments
-            #waypoint, seg = dubins_path.get_path()
-            #waypoints.append(waypoint)
-            #segments.append(seg)
-            path.append(dubins_path.plan_path(start, end))
+        dubins_path = DubinsPath(start, end, 0.5)   
+        # Get path segments
+        #waypoint, seg = dubins_path.get_path()
+        #waypoints.append(waypoint)
+        #segments.append(seg)
+        path.append(dubins_path.plan_path(start, end))
         #segment_type_mapping = {0: 'LSL', 1: 'LSR', 2: 'RSL', 3: 'RSR', 4: 'RLR', 5: 'LRL'}
 
         #segment_types = [segment_type_mapping[t] for t in segments]
@@ -490,7 +538,45 @@ class PathPlanner(Node):
         return waypoints
 
 
+    def update_pose(self, pose):
+        """Update the current robot pose.
+        
+        Args:
+            pose: A PoseStamped message containing the robot's current pose.
+        """
+        self.current_pose = pose
+        
+    '''def publish_tf(self):
+        """Publish the current robot pose to the /tf topic."""
+        if self.current_pose is None:
+            return
+            
+        # Create and publish transform
+        transform = TransformStamped()
+        transform.header.stamp = self.get_clock().now().to_msg()
+        transform.header.frame_id = 'map'
+        transform.child_frame_id = f'{self.namespace}/base_link'
+        
+        # Set the transform translation and rotation from the current pose
+        transform.transform.translation.x = self.current_pose.pose.position.x
+        transform.transform.translation.y = self.current_pose.pose.position.y
+        transform.transform.translation.z = 0.0
+        transform.transform.rotation = self.current_pose.pose.orientation
+        
+        # Publish the transform
+        self.tf_broadcaster.sendTransform(transform)'''
+        
     def get_transform(self, pose):
+        """Get a transform from the robot's current pose.
+        
+        Args:
+            pose: A PoseStamped message containing the target pose.
+            
+        Returns:
+            TransformStamped: The transform from map to base_link.
+        """
+        # Update the current pose
+        self.update_pose(pose)
         
         # Create TransformStamped message
         transform_stamped = TransformStamped()
@@ -499,12 +585,14 @@ class PathPlanner(Node):
         transform_stamped.header.stamp = self.get_clock().now().to_msg()
         transform_stamped.header.frame_id = "map"
 
-        # Populate child_frame_id
-        transform_stamped.child_frame_id = "base_link"
+        # Populate child_frame_id with namespace
+        transform_stamped.child_frame_id = f"{self.namespace}/base_link"
 
         # Populate Transform
-        transform_stamped.transform.translation = Vector3(z=pose.pose.position.x, y=pose.pose.position.y, z=0.0)
-        transform_stamped.transform.rotation = Quaternion(x=0.0, y=0.0, z=0.0, w=pose.pose.orientation.w)
+        transform_stamped.transform.translation.x = pose.pose.position.x
+        transform_stamped.transform.translation.y = pose.pose.position.y
+        transform_stamped.transform.translation.z = 0.0 
+        transform_stamped.transform.rotation = pose.pose.orientation
         
         return transform_stamped
         # Append to transforms array
@@ -528,56 +616,77 @@ class PathPlanner(Node):
         yaw = math.atan2(dy, dx)
         return yaw
 
-    def robot_task(self, in_pose):
-        global collision_detected
-        if collision_detected:        
-            self.manage_collision(self.robot_task)
-        else:
-            try:
-                graph = [in_pose]
-                path = Path()
-                path.header.frame_id = "map"
-                path.header.stamp = self.get_clock().now().to_msg()
-                graph = self.get_trajectory(self.goal_point, graph, shelfino)
+    def robot_task(self):
+        in_pose = (self.initial_x, self.initial_y, self.initial_yaw)
+        self.get_logger().debug(f"Starting robot_task with initial pose: {in_pose}")
+        #global collision_detected
+        #if collision_detected:        
+        #    self.manage_collision(self.robot_task)
+        #else:
+   
+        try:
+            graph = [in_pose]
+            self.parents = {graph[0]: None} 
+            path = Path()
+            path.header.frame_id = "map"
+            path.header.stamp = self.get_clock().now().to_msg()
+            
+            self.get_logger().debug(f"Planning trajectory to goal: {self.goal_point}")
+            graph = self.get_trajectory(self.goal_point, graph)
+            self.get_logger().debug(f"Generated trajectory with {len(graph)} points")
+            
+            #waypoints_list, segments = self.get_waypoints(in_pose, graph)
+            for i in range(len(graph) - 1):
+                start = graph[i]
+                end = graph[i + 1]
+                self.get_logger().debug(f"Processing segment {i+1}/{len(graph)-1}: {start} -> {end}")
                 
+                dubins_path = DubinsPath(start, end, 0.5)   
+                local_path = dubins_path.plan_path(start, end)
+                self.get_logger().debug(f"Planned Dubins path with {len(local_path[0]) if local_path and len(local_path) > 0 else 0} points")
                 
-                #waypoints_list, segments = self.get_waypoints(in_pose, graph)
-                for i in range(len(graph) - 1):
-                    start = graph[i]
-                    end = graph[i + 1]
-                    local_path = DubinsPath(start, end, 0.5)   
-                    print(local_path)   
-                    self.publish_velocities(local_path[0], local_path[1])
-                    pose = PoseStamped()
-                    pose.header.frame_id = "map"
-                    pose.header.stamp = self.get_clock().now().to_msg()
-                    pose.pose.position.x = local_path[0]
-                    pose.pose.position.y = local_path[1]
-                    pose.pose.position.z = 0.0
-                    yaw = self.yaw_from_two_points(start[0], start[1], end[0], end[1])
-                    quat = tf2_ros.transformations.quaternion_from_euler(0, 0, yaw)
-                    pose.pose.orientation.x = quat[0]
-                    pose.pose.orientation.y = quat[1]
-                    pose.pose.orientation.z = quat[2]
-                    pose.pose.orientation.w = quat[3]
-                    self.publish_joint_state(pose)
-                    tf_msg = TFMessage()
-                    tf_msg.transforms.append(self.get_transform(pose))
-                    self.tf_pub.publish(tf_msg)
-                    path.poses.append(pose)
-                self.path_pub.publish(path)
-                self.send_follow_path_goal(path)
-                self.get_logger().info(f'Published global plan {path}')
+                self.publish_velocities(local_path[0], local_path[1])
+                
+                pose = PoseStamped()
+                pose.header.frame_id = "map"
+                pose.header.stamp = self.get_clock().now().to_msg()
+                pose.pose.position.x = local_path[0]
+                pose.pose.position.y = local_path[1]
+                pose.pose.position.z = 0.0
+                
+                yaw = self.yaw_from_two_points(start[0], start[1], end[0], end[1])
+                quat = tf_transformations.quaternion_from_euler(0, 0, yaw)
+                pose.pose.orientation.x = quat[0]
+                pose.pose.orientation.y = quat[1]
+                pose.pose.orientation.z = quat[2]
+                pose.pose.orientation.w = quat[3]
+                
+                #self.publish_joint_state(pose)
+                #tf_msg = TFMessage()
+                #tf_msg.transforms.append(self.get_transform(pose))
+                #self.tf_pub.publish(tf_msg)
+                path.poses.append(pose)
+                
+            self.get_logger().debug(f"Publishing path with {len(path.poses)} poses")
+            if hasattr(self, 'plan_timer') and self.plan_timer is not None:
+                self.plan_timer.cancel()
+                self.plan_timer = None  
+            self.path_pub.publish(path)
+            self.path_published_event.set()
+            
+            self.get_logger().info("Sending path to follow action server")
+            success = self.send_follow_path_goal(path)
+            self.get_logger().info(f'Published global plan with {len(path.poses)} poses')
+            self.get_logger().debug(f'Path details: {path}')
                 #waypoints = self.create_waypoints(waypoints_list)
                 #self.controller_node.follow_pth(shelfino.client, waypoints)
-                print(graph)
-                self.path_published_event.set()
+                #print(graph)
                 
-                  
-                
-                               
-            except Exception as e:
-                self.get_logger().error(f"Task of Robot {shelfino.get_namespace()} failed: {e}")
+                #self.robot_task_event.set()
+                              
+        except Exception as e:
+            self.get_logger().error(f"Task of Robot {shelfino.get_namespace()} failed: {e}", exc_info=True)
+            raise
         
 
     def get_mul_cost(self, config1, config2):
@@ -611,41 +720,43 @@ class PathPlanner(Node):
 
 
     def extend(self, q_nearest, q_random, step_size=1.0):
-        new_node = np.zeros(3)
+        # Compute deltas
+        dx = q_random[0] - q_nearest[0]
+        dy = q_random[1] - q_nearest[1]
+        dyaw = self.normalize_angle(q_random[2] - q_nearest[2])
 
-        # Extend from the nearest node towards the sampled point
-        delta_x1 = q_random[0] - q_nearest[0]
-        delta_x2 = q_random[1] - q_nearest[1]
-        delta_x3 = q_random[2] - q_nearest[2]
-        #delta_x4 = q_random[3] - q_nearest[3]
-        norm = np.linalg.norm(np.array([delta_x1, delta_x2, delta_x3]))
-    
-        # Check if norm is zero or very close to zero
-        if norm > 1e-10:  # A small threshold to avoid division by zero
-            delta_x1 /= norm
-            delta_x2 /= norm
-            delta_x3 /= norm
-        else:
-            # Handle the zero norm case appropriately
-            print("Norm is zero or very close to zero, cannot normalize deltas")
-            delta_x1 = 0.0
-            delta_x2 = 0.0
-            delta_x3 = 0.0
-        
-        if norm>step_size:            
-            new_node[0] = (q_nearest[0] + (step_size * delta_x1))
-            new_node[1] = (q_nearest[1] + (step_size * delta_x2))
-            new_node[2] = (q_nearest[2] + (step_size * delta_x3))
-            #new_node[3] = (q_nearest[3] + (step_size * delta_x4)).astype(int)    
-        else:
-            new_node = q_random
-        
-        
-        return tuple(new_node)
+        norm = np.linalg.norm([dx, dy, dyaw])
+        if norm < 1e-6:
+            return None  # Avoid zero movement
 
+        # Normalize direction
+        dx /= norm
+        dy /= norm
+        dyaw /= norm
+
+        # Compute new state in direction of q_random
+        if norm > step_size:
+            new_x = q_nearest[0] + step_size * dx
+            new_y = q_nearest[1] + step_size * dy
+            new_yaw = self.normalize_angle(q_nearest[2] + step_size * dyaw)
+        else:
+            new_x, new_y, new_yaw = q_random
+
+        new_node = (new_x, new_y, new_yaw)
+
+        # Optional: collision check here
+        #if not self.is_in_free_space(new_node):
+        #    return None
+        
+        return new_node
+
+    def normalize_angle(self, angle):
+        return (angle + np.pi) % (2 * np.pi) - np.pi    
 
     def rewire(self, near_nodes, idx, q_new):
-        near_nodes[idx] = q_new
+        node_to_rewire = near_nodes[idx]
+        if node_to_rewire in self.parents:
+            self.parents[node_to_rewire] = q_new
         
 
     def is_clear(self, robot, obstacles, walls):
@@ -677,42 +788,62 @@ class PathPlanner(Node):
 
 
 
-    def get_trajectory(self, q_goal, graph, robot):        
+    def get_trajectory(self, q_goal, graph):
         q_init = graph[0]
-        while self.get_cost(q_goal, q_init)>0.3:        
-            q_random = (np.random.uniform(q_goal[0]-0.5, q_goal[0]+0.5), 
-                        np.random.uniform(q_goal[1]-0.5, q_goal[1]+0.5),
-                        np.random.uniform(q_goal[2]-0.5, q_goal[2]+0.5))    
-            #if self.get_mul_cost(q_random, self.solid_obs)>self.robot_size and self.get_cost(q_random, self.robot_coords)>self.robot_size  and self.get_cost(q_random, self.walls)>self.robot_size:
+
+        while self.get_cost(q_goal, q_init) > 0.05:
+            # Sample a random pose near the goal
+            q_random = (
+                np.random.uniform(q_goal[0] - 0.05, q_goal[0] + 0.05),
+                np.random.uniform(q_goal[1] - 0.05, q_goal[1] + 0.05),
+                np.random.uniform(q_goal[2] - 0.05, q_goal[2] + 0.05)
+            )
+
+            # Collision check for random sample
             if not self.is_in_free_space(q_random):
                 continue
-            q_nearest = self.nearest(graph, q_random) 
+
+            # Find the nearest node in the tree
+            q_nearest = self.nearest(graph, q_random)
+
+            # Extend from q_nearest towards q_random
             q_new = self.extend(q_nearest, q_random)
-            if not self.is_in_free_space(q_new):
+
+            if q_new is None or not self.is_in_free_space(q_new):
                 continue
+
+            # Find nearby nodes for rewiring
             min_cost = self.get_cost(q_goal, q_nearest)
-            near_nodes = [node for node in graph if (self.get_cost(q_new, node) <= min_cost)] 
+            near_nodes = [node for node in graph if self.get_cost(q_new, node) <= min_cost]
+
+            # Choose the parent that gives the lowest cost
+            best_parent = q_nearest
+            best_cost = self.get_cost(q_goal, q_nearest) + self.get_cost(q_new, q_nearest)
+
+            for near_node in near_nodes:
+                if not self.is_in_free_space(near_node):
+                    continue
+                cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
+                if cost < best_cost:
+                    best_parent = near_node
+                    best_cost = cost
+
+            # Add q_new to the tree with best parent
+            self.parents[q_new] = best_parent
+            graph.append(q_new)
+
+            # Rewire near nodes through q_new if cheaper
             for idx, near_node in enumerate(near_nodes):
-                #if self.get_cost(q_new, self.robot_coords)>self.robot_size and self.get_mul_cost(q_new, self.solid_obs)>self.robot_size and self.get_cost(q_new, self.walls)>self.robot_size:                   
-                if self.is_in_free_space(q_new):
-                        new_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
-                        if new_cost < min_cost:
-                            min_cost = new_cost
-                else:
-                    collision_detected = True
-                    self.manage_collision(self.robot_task)
-                #if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
-                graph.append(q_new)
-                for idx, near_node in enumerate(near_nodes):
-                    #if self.get_cost(near_node, self.robot_coords)>self.robot_size and self.get_mul_cost(near_node, self.solid_obs)>self.robot_size and self.get_cost(near_node, self.walls)>self.robot_size: 
-                    if self.is_in_free_space(near_node):
-                        if (self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node))<self.get_cost(q_goal, near_node):
-                            self.rewire(near_nodes, idx, q_new) 
-                    else:
-                        collision_detected = True 
-                        self.manage_collision(self.robot_task)
-                q_init = q_new   
-            
+                if not self.is_in_free_space(near_node):
+                    continue
+                current_cost = self.get_cost(q_goal, near_node)
+                new_cost = self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node)
+                if new_cost < current_cost:
+                    self.rewire(near_nodes, idx, q_new)
+
+            # Update q_init so we check closeness to goal again
+            q_init = q_new
+
         return graph
 
 
@@ -787,5 +918,33 @@ class PathPlanner(Node):
         path_types = path.path_type() 
         
         return waypoints, path_types'''
+
+def main(args=None):
+    rclpy.init(args=args)
     
+    try:
+        # Create and initialize the node
+        path_planner = PathPlanner()
+        
+        # Log startup message
+        path_planner.get_logger().info('Path planner node started')
+        
+        # Keep the node alive until shutdown is requested
+        rclpy.spin(path_planner)
+            
+    except KeyboardInterrupt:
+        path_planner.get_logger().info('Path planner node stopped cleanly')
+    except Exception as e:
+        path_planner.get_logger().error(f'Error in path planner: {str(e)}')
+        import traceback
+        path_planner.get_logger().error(f'Traceback: {traceback.format_exc()}')
+    finally:
+        # Cleanup
+        if 'path_planner' in locals():
+            path_planner.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
 

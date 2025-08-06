@@ -328,19 +328,9 @@ def spawn_shelfini(context):
         
         # Group all actions for this robot
 
-        tf_bridge_node = Node(
-            package='ros_gz_bridge',
-            executable='parameter_bridge',
-            arguments=[
-                '/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
-                '/tf_static@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
-            ],
-            parameters=[{
-            'use_sim_time': True}],
-            output='screen',
-            condition=launch.conditions.IfCondition(LaunchConfiguration('use_sim_time'))
-        )
-        nodes.append(tf_bridge_node)
+
+        
+        
         spawn_node = GroupAction([
             # Static transform publisher: map -> odom for each robot
    
@@ -379,7 +369,7 @@ def spawn_shelfini(context):
                 output='screen',
                 condition=launch.conditions.IfCondition(LaunchConfiguration('use_sim_time'))
             ),
-            
+
             #Node(
             #    package='tf2_ros',
             #    executable='static_transform_publisher',
@@ -445,7 +435,10 @@ def spawn_shelfini(context):
             ),
 
             
+        TimerAction(
+            period=150.0, 
           # QoS Bridge node
+          actions=[
             Node(
                 package='automated_robot_planning',
                 namespace=shelfino_name,
@@ -461,17 +454,21 @@ def spawn_shelfini(context):
                 ],
                 output='screen'
             ),
+          ]),
 
-
-
-            Node(
-                package='automated_robot_planning',
-                namespace=shelfino_name,
-                executable='robot_controller.py',
-                parameters=[
-                    {'robot_positions': flat_robot_positions},
-                    {'obstacles': flat_obstacles_str},
-                    {'map_bounds': map_bounds_str},
+          
+        TimerAction(
+            period=170.0,
+            actions=[
+                # Path planner node
+                Node(
+                    package='automated_robot_planning',
+                    namespace=shelfino_name,
+                    executable='path_planner.py',
+                    parameters=[
+                        {'robot_positions': flat_robot_positions},
+                        {'obstacles': flat_obstacles_str},
+                        {'map_bounds': map_bounds_str},
                     {'use_sim_time': True},
                     {'robot_name': shelfino_name},
                     {'initial_x': x_pos},
@@ -482,9 +479,12 @@ def spawn_shelfini(context):
                 ],
                 output='screen'
             ),
-    
- 
-            # Include navigation stack for this robot
+          ]),
+
+        TimerAction(
+            period=140.0,
+          # Include navigation stack for this robot
+          actions=[
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([
                     os.path.join(get_package_share_directory('shelfino_navigation'), 'launch', 'shelfino_nav.launch.py')
@@ -506,10 +506,13 @@ def spawn_shelfini(context):
                 condition=launch.conditions.IfCondition(use_sim_time)
             ),
      
-
+          ]),
 
           
-
+     TimerAction(
+            period=500.0,
+          # Include navigation stack for this robot
+          actions=[
             Node(
                 package='shelfino_gazebo',
                 executable='destroy_shelfino',
@@ -522,7 +525,7 @@ def spawn_shelfini(context):
                 condition=launch.conditions.IfCondition(use_sim_time)
             ),
 
-       
+         ]),
             ])
             
              
@@ -642,6 +645,8 @@ def generate_launch_description():
         output='screen',
         condition=launch.conditions.IfCondition(LaunchConfiguration('use_sim_time'))
     )
+
+
 
     # Add a world reset action to clear existing entities before spawning new ones
     world_reset_action = ExecuteProcess(
@@ -776,7 +781,18 @@ def generate_launch_description():
             'attempt_respawn_reconnection': True
         }]
     )
-
+    tf_bridge_node = Node(
+                package='ros_gz_bridge',
+                executable='parameter_bridge',
+                arguments=[
+                    '/tf@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
+                    '/tf_static@tf2_msgs/msg/TFMessage@gz.msgs.Pose_V',
+                ],
+                parameters=[{
+                'use_sim_time': True}],
+                output='screen',
+                condition=launch.conditions.IfCondition(LaunchConfiguration('use_sim_time'))
+            )
     # Add lifecycle node activation commands with improved logic
     def configure_borders(context):
         try:
@@ -965,8 +981,7 @@ def generate_launch_description():
     ld.add_action(TimerAction(period=105.0, actions=[map_server_node]))
     ld.add_action(TimerAction(period=110.0, actions=[map_server_lifecycle_manager]))
 
-
-
+    ld.add_action(TimerAction(period=115.0, actions=[tf_bridge_node]))
     # 5. Launch robot state publishers and spawn robots with navigation included
     # Launch RSP first
     #ld.add_action(TimerAction(period=145.0, actions=[OpaqueFunction(function=launch_rsp)]))
