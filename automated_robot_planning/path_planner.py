@@ -9,7 +9,7 @@ import dubins
 import numpy as np
 import tf2_ros
 from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseArray, Polygon, PoseStamped
+from geometry_msgs.msg import PoseArray, Polygon, PoseStamped, Point,Pose
 from geometry_msgs.msg import TransformStamped, Vector3, Quaternion, Twist
 from obstacles_msgs.msg import ObstacleArrayMsg
 from visualization_msgs.msg import MarkerArray
@@ -27,7 +27,8 @@ from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import TransformStamped
-
+import asyncio
+from dubins import DubinsPath
 
 collision_detected = False
 
@@ -41,8 +42,14 @@ class PathPlanner(Node):
         #self.controller_node = controller_node   
         self.raytrace_min_range = 0.0
         self.raytrace_max_range = 3.0
-        self.costmap_resolution = 0.05
-        self.costmap_size = [3, 3]
+        self.costmap_resolution = 0.05000000074505806
+        self.costmap_size = [60, 60]
+        self.costmap_origin = (- (self.costmap_size[0] * self.costmap_resolution) / 2, - (self.costmap_size[1] * self.costmap_resolution) / 2)
+        self.local_costmap = np.zeros(
+            (self.costmap_size[1], self.costmap_size[0]),  # (height, width)
+            dtype=np.int8
+        )
+
         #self.gate_position = gate_position 
         self.const_linear_velocity = [0.2, 0.0, 0.5]
         self.walls = [] 
@@ -63,9 +70,49 @@ class PathPlanner(Node):
         self.initial_x = self.get_parameter('initial_x').value
         self.initial_y = self.get_parameter('initial_y').value
         self.initial_yaw = self.get_parameter('initial_yaw').value
+        self.start_pose = PoseStamped()
+        self.start_pose.header.frame_id = 'map'
+        self.start_pose.header.stamp = self.get_clock().now().to_msg()
+        self.start_pose.pose.position.x = self.initial_x
+        self.start_pose.pose.position.y = self.initial_y
+        self.start_pose.pose.position.z = 0.0
+        q = tf_transformations.quaternion_from_euler(0, 0, self.initial_yaw)
+        self.start_pose.pose.orientation.x = q[0]
+        self.start_pose.pose.orientation.y = q[1]
+        self.start_pose.pose.orientation.z = q[2]
+        self.start_pose.pose.orientation.w = q[3]
 
-        self.navigation_complete = threading.Event()
+        self.goal_pose = None
+        self.gate_position = None
+        qos_profile = QoSProfile(
+            depth=20,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL
+        )
+
+        self.create_subscription(
+            OccupancyGrid,
+            f'/{self.namespace}/local_costmap/costmap',
+            self.local_costmap_callback,
+            qos_profile)
         
+        self.create_subscription(
+            OccupancyGrid,
+            f'/{self.namespace}/global_costmap/costmap',
+            self.global_costmap_callback,
+            qos_profile)
+
+        self.gate_sub = self.create_subscription(
+            PoseArray,
+            '/gate_position',
+            self.gate_position_callback,
+            QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                depth=10
+            )
+        )
+        self.plan_timer = self.create_timer(1.0, self.robot_task)
         # Initialize TF broadcaster
         '''self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
         self.current_pose = None
@@ -78,36 +125,12 @@ class PathPlanner(Node):
         self.plan_timer = self.create_timer(1.0, self.robot_task)
 
         # Define QoS profile for the publisher
-        qos_profile = QoSProfile(
-            depth=20,
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL
-        )
-
+   
 
         #self.get_logger().info(f'Published initialpose: x={self.start_pose[0]}, y={self.start_pose[1]}, yaw={self.start_pose[2]}')
-        self.create_subscription(
-            OccupancyGrid,
-            f'/{self.namespace}/local_costmap/costmap',
-            self.local_costmap_callback,
-            qos_profile)
+   
         
-        self.create_subscription(
-            OccupancyGrid,
-            f'/{self.namespace}/global_costmap/costmap',
-            self.global_costmap_callback,
-            qos_profile)
-        
-        self.gate_sub = self.create_subscription(
-            PoseArray,
-            '/gate_position',
-            self.gate_position_callback,
-            QoSProfile(
-                reliability=ReliabilityPolicy.RELIABLE,
-                durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                depth=10
-            )
-        )
+     
 
         self.goal_pose_publisher = self.create_publisher(PoseStamped, f'/{self.namespace}/goal_pose', 10)
         self.cmd_vel_publisher = self.create_publisher(
@@ -123,84 +146,35 @@ class PathPlanner(Node):
             10
         )
 
+        self.goal_set_event = asyncio.Event()
+        self.path_published_event = asyncio.Event()
+        self.robot_task_event = asyncio.Event()
+        self.navigation_complete = asyncio.Event()
+
     def gate_position_callback(self, msg):
-        """Process incoming gate position data"""
-        #self.gate_positions = msg
+     
         self.get_logger().info(f'Received {len(msg.poses)} gate positions')
         self.gate_position = msg.poses[0]
         self.get_logger().info(f'Gate position: x={self.gate_position.position.x}, y={self.gate_position.position.y}')   
-        self.q_goal, self.goal_point = self.calculate_goal_pose()   
+        self.goal_pose = PoseStamped()
+        self.goal_pose.header.frame_id = self.start_pose.header.frame_id  # Assuming gate position is in the map frame
+        self.goal_pose.header.stamp = self.get_clock().now().to_msg()
+        self.goal_pose.pose.position.x = self.gate_position.position.x
+        self.goal_pose.pose.position.y = self.gate_position.position.y
+        self.goal_pose.pose.position.z = self.gate_position.position.z
+        self.goal_pose.pose.orientation.x = self.gate_position.orientation.x
+        self.goal_pose.pose.orientation.y = self.gate_position.orientation.y
+        self.goal_pose.pose.orientation.z = self.gate_position.orientation.z
+        self.goal_pose.pose.orientation.w = self.gate_position.orientation.w 
+        #_, _, yaw = tf_transformations.euler_from_quaternion([self.goal_pose.pose.orientation.x, self.goal_pose.pose.orientation.y, self.goal_pose.pose.orientation.z, self.goal_pose.pose.orientation.w])
+        self.goal_pose_publisher.publish(self.goal_pose)
+        self.goal_set_event.set()
+        self.get_logger().info('Published goal to goal_pose')
+        self.robot_task() 
         # Create goal pose from the first gate position
         
-        self.goal_pose_publisher.publish(self.q_goal)
-        self.get_logger().info('Published goal to /shelfino0/goal_pose')
-        self.get_logger().info(f'Goal position: x={self.q_goal.pose.position.x}, y={self.q_goal.pose.position.y}')
-        self.get_logger().debug(f"Starting robot_task with initial pose: {self.initial_x}, {self.initial_y}, {self.initial_yaw}")
-        in_pose = (self.initial_x, self.initial_y, self.initial_yaw)
-        #try:
-        graph = [in_pose]
-        self.parents = {graph[0]: None} 
-        path = Path()
-        path.header.frame_id = "map"
-        path.header.stamp = self.get_clock().now().to_msg()
         
-        self.get_logger().debug(f"Planning trajectory to goal: {self.goal_point}")
-        graph = self.get_trajectory(self.goal_point, graph)
-        self.get_logger().debug(f"Generated trajectory with {len(graph)} points")
         
-        #waypoints_list, segments = self.get_waypoints(in_pose, graph)
-        for i in range(len(graph) - 1):
-            start = graph[i]
-            end = graph[i + 1]
-            self.get_logger().debug(f"Processing segment {i+1}/{len(graph)-1}: {start} -> {end}")
-            
-            dubins_path = DubinsPath(start, end, 0.5)   
-            local_path = dubins_path.plan_path(start, end)
-            self.get_logger().debug(f"Planned Dubins path with {len(local_path[0]) if local_path and len(local_path) > 0 else 0} points")
-            
-            self.publish_velocities(local_path[0], local_path[1])
-            
-            pose = PoseStamped()
-            pose.header.frame_id = "map"
-            pose.header.stamp = self.get_clock().now().to_msg()
-            pose.pose.position.x = local_path[0]
-            pose.pose.position.y = local_path[1]
-            pose.pose.position.z = 0.0
-            
-            yaw = self.yaw_from_two_points(start[0], start[1], end[0], end[1])
-            quat = tf_transformations.quaternion_from_euler(0, 0, yaw)
-            pose.pose.orientation.x = quat[0]
-            pose.pose.orientation.y = quat[1]
-            pose.pose.orientation.z = quat[2]
-            pose.pose.orientation.w = quat[3]
-            
-            #self.publish_joint_state(pose)
-            #tf_msg = TFMessage()
-            #tf_msg.transforms.append(self.get_transform(pose))
-            #self.tf_pub.publish(tf_msg)
-            path.poses.append(pose)
-            
-        self.get_logger().debug(f"Publishing path with {len(path.poses)} poses")
-        if hasattr(self, 'plan_timer') and self.plan_timer is not None:
-            self.plan_timer.cancel()
-            self.plan_timer = None 
-        self.path_pub.publish(path)
-        self.path_published_event.set()
-        
-        self.get_logger().info("Sending path to follow action server")
-        success = self.send_follow_path_goal(path)
-        self.get_logger().info(f'Published global plan with {len(path.poses)} poses')
-        self.get_logger().debug(f'Path details: {path}')
-            #waypoints = self.create_waypoints(waypoints_list)
-            #self.controller_node.follow_pth(shelfino.client, waypoints)
-            #print(graph)
-            
-            #self.robot_task_event.set()
-                              
-        '''except Exception as e:
-            self.get_logger().error(f"Task of Robot {self.get_namespace()} failed: {e}", exc_info=True)
-            raise''' 
-
     def odom_callback(self, msg: Odometry):
         _, _, yaw = tf_transformations.euler_from_quaternion([msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w])
         self.get_current_pos_and_or = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw) # geometry_msgs/Pose
@@ -219,9 +193,9 @@ class PathPlanner(Node):
                 # Create goal message
                 goal_msg = FollowPath.Goal()
                 goal_msg.path = path_msg
-                goal_msg.controller_id = "FollowPath"
-                goal_msg.goal_checker_id = "simple_goal_checker"
-                goal_msg.progress_checker_id = "simple_progress_checker"
+                #goal_msg.controller_id = "FollowPath"
+                #goal_msg.goal_checker_id = "simple_goal_checker"
+                #goal_msg.progress_checker_id = "simple_progress_checker"
 
                 self.get_logger().info('Sending path to FollowPath action server')
 
@@ -247,7 +221,7 @@ class PathPlanner(Node):
                     if hasattr(result, 'result') and hasattr(result.result, 'error_code'):
                         self.get_logger().info(f"FollowPath result code: {result.result.error_code}")
                         self.get_logger().info(f"Error string: {result.result.error_string}")
-
+                self.navigation_complete.set()
                 return True
 
             except Exception as e:
@@ -427,21 +401,7 @@ class PathPlanner(Node):
                     collision_detected = True
                     self.manage_collision(self.robot_task)
 
-    def calculate_goal_pose(self):
-        goal_pose = PoseStamped()
-        goal_pose.header.frame_id = "map"  # Assuming gate position is in the map frame
-        goal_pose.header.stamp = self.get_clock().now().to_msg()
-        goal_pose.pose.position.x = self.gate_position.position.x
-        goal_pose.pose.position.y = self.gate_position.position.y
-        goal_pose.pose.position.z = self.gate_position.position.z
-        goal_pose.pose.orientation.x = self.gate_position.orientation.x
-        goal_pose.pose.orientation.y = self.gate_position.orientation.y
-        goal_pose.pose.orientation.z = self.gate_position.orientation.z
-        goal_pose.pose.orientation.w = self.gate_position.orientation.w 
-        _, _, yaw = tf_transformations.euler_from_quaternion([goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z, goal_pose.pose.orientation.w])
-        return goal_pose, (self.gate_position.position.x, self.gate_position.position.y, yaw)
-
-
+    
 
     def publish_velocities(self, pose, goal_pose):
         twist = Twist()
@@ -617,78 +577,125 @@ class PathPlanner(Node):
         return yaw
 
     def robot_task(self):
-        in_pose = (self.initial_x, self.initial_y, self.initial_yaw)
-        self.get_logger().debug(f"Starting robot_task with initial pose: {in_pose}")
-        #global collision_detected
-        #if collision_detected:        
-        #    self.manage_collision(self.robot_task)
-        #else:
-   
-        try:
-            graph = [in_pose]
-            self.parents = {graph[0]: None} 
-            path = Path()
-            path.header.frame_id = "map"
-            path.header.stamp = self.get_clock().now().to_msg()
+        
+        # Check if goal_pose is set
+        if self.goal_pose is None or not hasattr(self.goal_pose, 'pose'):
+            self.get_logger().info("Waiting for goal pose to be set...")
+            return
             
-            self.get_logger().debug(f"Planning trajectory to goal: {self.goal_point}")
-            graph = self.get_trajectory(self.goal_point, graph)
-            self.get_logger().debug(f"Generated trajectory with {len(graph)} points")
+        # Get start pose from start_pose
+        start = self.pose_to_tuple(self.start_pose.pose)
+        goal = self.pose_to_tuple(self.goal_pose.pose)
+        
+        self.get_logger().info(f"Starting robot task with start: {start}, goal: {goal}")
+        
+        graph = [start]
+        self.parents = {graph[0]: None} 
+        
+        self.get_logger().info(f"Planning trajectory to goal: {goal}")
+        graph = self.get_trajectory(goal, graph)
+        self.get_logger().info(f"Generated trajectory with {len(graph)} points")
+
+
+        path_msg = Path()
+        path_msg.header.frame_id = self.start_pose.header.frame_id
+
+        for q in graph:
+            pose = PoseStamped()
+            pose.header.frame_id = path_msg.header.frame_id
+            # Convert numpy arrays to float values for ROS2 Point message
+            x_val = float(q[0]) if hasattr(q[0], '__iter__') else q[0]
+            y_val = float(q[1]) if hasattr(q[1], '__iter__') else q[1]
+            yaw_val = float(q[2]) if hasattr(q[2], '__iter__') else q[2]
+            pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
+            pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
+            path_msg.poses.append(pose)
+        self.path_pub.publish(path_msg)
+        self.get_logger().info(f"Published path with {len(path.poses)} poses")
+        self.path_published_event.set()
+        #waypoints_list, segments = self.get_waypoints(in_pose, graph)
+        for i in range(len(graph) - 1):
+            local_path_msg = Path()
+            local_path_msg.header.frame_id = self.start_pose.header.frame_id
+            start = graph[i]
+            end = graph[i + 1]
+            self.get_logger().info(f"Processing segment {i+1}/{len(graph)-1}: {start} -> {end}")
             
-            #waypoints_list, segments = self.get_waypoints(in_pose, graph)
-            for i in range(len(graph) - 1):
-                start = graph[i]
-                end = graph[i + 1]
-                self.get_logger().debug(f"Processing segment {i+1}/{len(graph)-1}: {start} -> {end}")
-                
-                dubins_path = DubinsPath(start, end, 0.5)   
-                local_path = dubins_path.plan_path(start, end)
-                self.get_logger().debug(f"Planned Dubins path with {len(local_path[0]) if local_path and len(local_path) > 0 else 0} points")
-                
-                self.publish_velocities(local_path[0], local_path[1])
-                
-                pose = PoseStamped()
-                pose.header.frame_id = "map"
-                pose.header.stamp = self.get_clock().now().to_msg()
-                pose.pose.position.x = local_path[0]
-                pose.pose.position.y = local_path[1]
-                pose.pose.position.z = 0.0
-                
-                yaw = self.yaw_from_two_points(start[0], start[1], end[0], end[1])
-                quat = tf_transformations.quaternion_from_euler(0, 0, yaw)
-                pose.pose.orientation.x = quat[0]
-                pose.pose.orientation.y = quat[1]
-                pose.pose.orientation.z = quat[2]
-                pose.pose.orientation.w = quat[3]
-                
-                #self.publish_joint_state(pose)
-                #tf_msg = TFMessage()
-                #tf_msg.transforms.append(self.get_transform(pose))
-                #self.tf_pub.publish(tf_msg)
-                path.poses.append(pose)
-                
-            self.get_logger().debug(f"Publishing path with {len(path.poses)} poses")
-            if hasattr(self, 'plan_timer') and self.plan_timer is not None:
-                self.plan_timer.cancel()
-                self.plan_timer = None  
-            self.path_pub.publish(path)
-            self.path_published_event.set()
-            
+            dubins_path = DubinsPath(start, end, 0.5)   
+            local_path = dubins_path.plan_path(start, end)
+            self.get_logger().info(f"Planned Dubins path with {len(local_path[0]) if local_path and len(local_path) > 0 else 0} points")
             self.get_logger().info("Sending path to follow action server")
-            success = self.send_follow_path_goal(path)
-            self.get_logger().info(f'Published global plan with {len(path.poses)} poses')
-            self.get_logger().debug(f'Path details: {path}')
-                #waypoints = self.create_waypoints(waypoints_list)
-                #self.controller_node.follow_pth(shelfino.client, waypoints)
-                #print(graph)
-                
-                #self.robot_task_event.set()
+            self.get_logger().info(f"Sending path with {len(local_path[0]) if local_path and len(local_path) > 0 else 0} points to follow action server")
+            local_path_msg = Path()
+            local_path_msg.header.frame_id = self.start_pose.header.frame_id
+            for q in local_path:
+                pose = PoseStamped()
+                pose.header.frame_id = path_msg.header.frame_id
+                x_val = float(q[0]) if hasattr(q[0], '__iter__') else q[0]
+                y_val = float(q[1]) if hasattr(q[1], '__iter__') else q[1]
+                yaw_val = float(q[2]) if hasattr(q[2], '__iter__') else q[2]
+                pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
+                pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
+                local_path_msg.poses.append(pose)
+            success = self.send_follow_path_goal(local_path_msg)
+            if success:
+                self.get_logger().info("Successfully executed path following")
+            else:
+                self.get_logger().error("Failed to execute path following")
+        self.robot_task_event.set()
+        '''self.publish_velocities(local_path[0], local_path[1])
+        
+        pose = PoseStamped()
+        pose.header.frame_id = "map"
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.position.x = local_path[0]
+        pose.pose.position.y = local_path[1]
+        pose.pose.position.z = 0.0
+        
+        yaw = self.yaw_from_two_points(start[0], start[1], end[0], end[1])
+        quat = tf_transformations.quaternion_from_euler(0, 0, yaw)
+        pose.pose.orientation.x = quat[0]
+        pose.pose.orientation.y = quat[1]
+        pose.pose.orientation.z = quat[2]
+        pose.pose.orientation.w = quat[3]
+        
+        #self.publish_joint_state(pose)
+        #tf_msg = TFMessage()
+        #tf_msg.transforms.append(self.get_transform(pose))
+        #self.tf_pub.publish(tf_msg)
+        path.poses.append(pose)
+            
+        self.get_logger().info(f"Publishing path with {len(path.poses)} poses")
+        if hasattr(self, 'plan_timer') and self.plan_timer is not None:
+            self.plan_timer.cancel()
+            self.plan_timer = None 
+        self.path_pub.publish(path)
+  
+        
+        self.get_logger().info("Sending path to follow action server")
+        success = self.send_follow_path_goal(path)
+        self.get_logger().info(f'Published global plan with {len(path.poses)} poses')
+        self.get_logger().info(f'Path details: {path}')
+            #waypoints = self.create_waypoints(waypoints_list)
+            #self.controller_node.follow_pth(shelfino.client, waypoints)
+            #print(graph)
+            
+            #self.robot_task_event.set()
                               
         except Exception as e:
-            self.get_logger().error(f"Task of Robot {shelfino.get_namespace()} failed: {e}", exc_info=True)
-            raise
-        
+            self.get_logger().error(f"Task of Robot {self.get_namespace()} failed: {e}", exc_info=True)
+            raise''' 
 
+    def yaw_to_quaternion(self, yaw):
+        q = tf_transformations.quaternion_from_euler(0, 0, yaw)
+        return Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
+        
+    def pose_to_tuple(self, pose: Pose):
+        x = pose.position.x
+        y = pose.position.y
+        yaw = self.quaternion_to_yaw(pose.orientation)
+        return (x, y, yaw)  
+    
     def get_mul_cost(self, config1, config2):
         for c in config2:
             if len(c) == 2:
@@ -786,40 +793,105 @@ class PathPlanner(Node):
         except:
             return False
 
-
+    def sample_random_free_space(self, max_attempts=1000):
+        """
+        Pick a random point anywhere in the costmap that is free.
+        Returns tuple (x, y, theta)
+        """
+        for _ in range(max_attempts):
+            # Sample world coordinates within map bounds
+            x = np.random.uniform(self.costmap_origin[0],
+                                self.costmap_origin[0] + self.local_costmap.shape[0] * self.costmap_resolution)
+            y = np.random.uniform(self.costmap_origin[1],
+                                self.costmap_origin[1] + self.local_costmap.shape[1] * self.costmap_resolution)
+            theta = np.random.uniform(-math.pi, math.pi)
+            if self.is_in_free_space((x, y, theta)):
+                return (x, y, theta)
+        return None  # No free point found
 
     def get_trajectory(self, q_goal, graph):
+        self.get_logger().info("Starting trajectory planning...")
+        self.get_logger().info(f"Start position: {graph[0]}")
+        self.get_logger().info(f"Goal position: {q_goal}")
+
         q_init = graph[0]
+        iteration = 0
+        max_iterations = 1000
 
-        while self.get_cost(q_goal, q_init) > 0.05:
-            # Sample a random pose near the goal
-            q_random = (
-                np.random.uniform(q_goal[0] - 0.05, q_goal[0] + 0.05),
-                np.random.uniform(q_goal[1] - 0.05, q_goal[1] + 0.05),
-                np.random.uniform(q_goal[2] - 0.05, q_goal[2] + 0.05)
-            )
+        goal_sample_rate = 0.1  # 10% of the time, sample the goal directly
+        step_size = 0.05        # Maximum extension length
+        workspace_bounds = [(-6.0, 6.0), (-6.0, 6.0), (-math.pi, math.pi)]  # Example bounds
 
-            # Collision check for random sample
-            if not self.is_in_free_space(q_random):
+        stuck_counter = 0  # Track how long we've been stuck at same best distance
+        best_distance = self.get_cost(q_goal, q_init)
+
+        start_time = self.get_clock().now()
+        last_log_time = start_time
+
+        while self.get_cost(q_goal, q_init) > 0.05 and iteration < max_iterations:
+            iteration += 1
+            current_time = self.get_clock().now()
+
+            # Log progress periodically
+            if iteration % 100 == 0 or (current_time - last_log_time).nanoseconds > 5e9:
+                self.get_logger().info(
+                    f"Iteration: {iteration}, Current best distance to goal: {self.get_cost(q_goal, q_init):.3f}"
+                )
+                last_log_time = current_time
+
+            # Check if we're stuck (distance not improving)
+            current_distance = self.get_cost(q_goal, q_init)
+            if abs(current_distance - best_distance) < 1e-3:
+                stuck_counter += 1
+            else:
+                stuck_counter = 0
+                best_distance = current_distance
+
+            # If stuck for too many iterations, jump to a random free-space point
+            if stuck_counter > 200:
+                random_free_point = self.sample_random_free_space()
+                if random_free_point:
+                    self.get_logger().warn(f"Stuck detected. Jumping to new free point: {random_free_point}")
+                    q_init = random_free_point
+                    graph.append(q_init)
+                stuck_counter = 0
                 continue
 
-            # Find the nearest node in the tree
+            # Goal biasing: sometimes sample the goal, otherwise sample from workspace
+            if np.random.rand() < goal_sample_rate:
+                q_random = q_goal
+            else:
+                q_random = tuple(
+                    np.random.uniform(low, high) for low, high in workspace_bounds
+                )
+
+            # Skip if random sample is in collision
+            if not self.is_in_free_space(q_random):
+                if iteration % 200 == 0:
+                    self.get_logger().debug(f"Skipping colliding sample at {q_random}")
+                continue
+
+            # Find nearest node in tree
             q_nearest = self.nearest(graph, q_random)
 
-            # Extend from q_nearest towards q_random
-            q_new = self.extend(q_nearest, q_random)
+            # Move a fixed step toward q_random
+            direction = np.array(q_random) - np.array(q_nearest)
+            dist = np.linalg.norm(direction)
+            if dist > step_size:
+                direction = direction / dist * step_size
+            q_new = tuple(np.array(q_nearest) + direction)
 
-            if q_new is None or not self.is_in_free_space(q_new):
+            # Skip if q_new itself is in collision
+            if not self.is_in_free_space(q_new):
                 continue
 
             # Find nearby nodes for rewiring
             min_cost = self.get_cost(q_goal, q_nearest)
             near_nodes = [node for node in graph if self.get_cost(q_new, node) <= min_cost]
 
-            # Choose the parent that gives the lowest cost
+            # Choose best parent
             best_parent = q_nearest
             best_cost = self.get_cost(q_goal, q_nearest) + self.get_cost(q_new, q_nearest)
-
             for near_node in near_nodes:
                 if not self.is_in_free_space(near_node):
                     continue
@@ -828,11 +900,11 @@ class PathPlanner(Node):
                     best_parent = near_node
                     best_cost = cost
 
-            # Add q_new to the tree with best parent
+            # Add new node
             self.parents[q_new] = best_parent
             graph.append(q_new)
 
-            # Rewire near nodes through q_new if cheaper
+            # Rewire
             for idx, near_node in enumerate(near_nodes):
                 if not self.is_in_free_space(near_node):
                     continue
@@ -841,10 +913,19 @@ class PathPlanner(Node):
                 if new_cost < current_cost:
                     self.rewire(near_nodes, idx, q_new)
 
-            # Update q_init so we check closeness to goal again
+            # Update current best
             q_init = q_new
 
+        if iteration >= max_iterations:
+            self.get_logger().warn(f"Reached max iterations ({max_iterations}) without goal")
+            self.get_logger().warn(f"Closest distance achieved: {self.get_cost(q_goal, q_init):.3f}")
+
+        planning_time = (self.get_clock().now() - start_time).nanoseconds / 1e9
+        self.get_logger().info(f"Trajectory planning completed in {planning_time:.2f} seconds")
+        self.get_logger().info(f"Final path has {len(graph)} nodes")
+
         return graph
+
 
 
 
@@ -900,6 +981,10 @@ class PathPlanner(Node):
             self.get_logger().error(f"Collision handling failed: {e}")
 
 
+    def quaternion_to_yaw(self, q: Quaternion):
+        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny_cosp, cosy_cosp)
 
 '''class DubinsPath():
     def __init__(self, start, end):
@@ -919,7 +1004,7 @@ class PathPlanner(Node):
         
         return waypoints, path_types'''
 
-def main(args=None):
+'''def main(args=None):
     rclpy.init(args=args)
     
     try:
@@ -946,5 +1031,57 @@ def main(args=None):
 
 
 if __name__ == '__main__':
-    main()
+    main()'''
+
+
+async def ros_spin(node: Node):
+    cancel = node.create_guard_condition(lambda: None)
+
+    def _spin_task(fut, loop):
+        while not fut.cancelled():
+            rclpy.spin_once(node, timeout_sec=0.1)
+        if not fut.done():
+            loop.call_soon_threadsafe(fut.set_result, None)
+
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    thread = threading.Thread(target=_spin_task, args=(fut, loop), daemon=True)
+    thread.start()
+
+    try:
+        # Keep spinning until cancelled
+        await fut
+    except asyncio.CancelledError:
+        cancel.trigger()
+    fut.cancel()  # Signal the spinning thread to stop
+    thread.join()
+    node.destroy_guard_condition(cancel)
+
+
+async def main():
+    rclpy.init()
+    node = PathPlanner()
+    node.loop = asyncio.get_running_loop()  # Store the main event loop in the node
+    # Start spinning in asyncio
+    spin_task = asyncio.create_task(ros_spin(node))
+
+    # Wait for events after starting the spin task
+    try:
+        await node.goal_set_event.wait()
+        await node.path_published_event.wait()
+        await node.robot_task_event.wait()
+        await node.navigation_complete.wait()
+    except asyncio.CancelledError:
+        pass
+
+    spin_task.cancel()
+    await spin_task
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+
 

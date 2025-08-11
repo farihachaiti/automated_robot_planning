@@ -510,7 +510,7 @@ def spawn_shelfini(context):
 
           
      TimerAction(
-            period=500.0,
+            period=50000.0,
           # Include navigation stack for this robot
           actions=[
             Node(
