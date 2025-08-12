@@ -12,7 +12,7 @@ from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseArray, Polygon, PoseStamped, Point,Pose
 from geometry_msgs.msg import TransformStamped, Vector3, Quaternion, Twist
 from obstacles_msgs.msg import ObstacleArrayMsg
-from visualization_msgs.msg import MarkerArray
+from visualization_msgs.msg import MarkerArray, Marker
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 import xacro
 #from urdf_parser_py.urdf import URDF
@@ -146,6 +146,12 @@ class PathPlanner(Node):
             10
         )
 
+        self.gazebo_marker_pub = self.create_publisher(
+            MarkerArray, 
+            '/visualization_marker_array', 
+            10
+        )   
+
         self.goal_set_event = asyncio.Event()
         self.path_published_event = asyncio.Event()
         self.robot_task_event = asyncio.Event()
@@ -173,7 +179,51 @@ class PathPlanner(Node):
         self.robot_task() 
         # Create goal pose from the first gate position
         
+    def publish_path_to_gazebo(self, path):
+        """Convert Nav2 Path to Gazebo MarkerArray for visualization"""
+        marker_array = MarkerArray()
         
+        # 1. Create path line marker
+        line_marker = Marker()
+        line_marker.header = path.header
+        line_marker.ns = "path"
+        line_marker.id = 0
+        line_marker.type = Marker.LINE_STRIP
+        line_marker.action = Marker.ADD
+        line_marker.scale.x = 0.1  # Line width
+        line_marker.color.a = 1.0  # Alpha
+        line_marker.color.r = 0.0  # Red
+        line_marker.color.g = 1.0  # Green
+        line_marker.color.b = 0.0  # Blue
+        
+        # 2. Create waypoint markers
+        for i, pose in enumerate(path.poses):
+            # Add point to line strip
+            point = Point()
+            point.x = pose.pose.position.x
+            point.y = pose.pose.position.y
+            point.z = pose.pose.position.z
+            line_marker.points.append(point)
+            
+            # Add sphere at each waypoint (optional)
+            wp_marker = Marker()
+            wp_marker.header = path.header
+            wp_marker.ns = "waypoints"
+            wp_marker.id = i + 1000  # Unique ID
+            wp_marker.type = Marker.SPHERE
+            wp_marker.action = Marker.ADD
+            wp_marker.pose = pose.pose
+            wp_marker.scale.x = 0.2
+            wp_marker.scale.y = 0.2
+            wp_marker.scale.z = 0.2
+            wp_marker.color.a = 1.0
+            wp_marker.color.r = 1.0
+            wp_marker.color.g = 0.0
+            wp_marker.color.b = 0.0
+            marker_array.markers.append(wp_marker)
+        
+        marker_array.markers.append(line_marker)
+        self.gazebo_marker_pub.publish(marker_array)
         
     def odom_callback(self, msg: Odometry):
         _, _, yaw = tf_transformations.euler_from_quaternion([msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w])
@@ -611,7 +661,8 @@ class PathPlanner(Node):
             pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
             path_msg.poses.append(pose)
         self.path_pub.publish(path_msg)
-        self.get_logger().info(f"Published path with {len(path.poses)} poses")
+        self.publish_path_to_gazebo(path_msg)
+        self.get_logger().info(f"Published path with {len(path_msg.poses)} poses")
         self.path_published_event.set()
         #waypoints_list, segments = self.get_waypoints(in_pose, graph)
         for i in range(len(graph) - 1):
@@ -624,9 +675,7 @@ class PathPlanner(Node):
             dubins_path = DubinsPath(start, end, 0.5)   
             local_path = dubins_path.plan_path(start, end)
             self.get_logger().info(f"Planned Dubins path with {len(local_path[0]) if local_path and len(local_path) > 0 else 0} points")
-            self.get_logger().info("Sending path to follow action server")
-            self.get_logger().info(f"Sending path with {len(local_path[0]) if local_path and len(local_path) > 0 else 0} points to follow action server")
-            local_path_msg = Path()
+            
             local_path_msg.header.frame_id = self.start_pose.header.frame_id
             for q in local_path:
                 pose = PoseStamped()
@@ -637,11 +686,13 @@ class PathPlanner(Node):
                 pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
                 pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
                 local_path_msg.poses.append(pose)
-            success = self.send_follow_path_goal(local_path_msg)
-            if success:
-                self.get_logger().info("Successfully executed path following")
-            else:
-                self.get_logger().error("Failed to execute path following")
+        self.get_logger().info("Sending path to follow action server")
+        self.get_logger().info(f"Sending path with {len(local_path_msg.poses)} points to follow action server")    
+        success = self.send_follow_path_goal(local_path_msg)
+        if success:
+            self.get_logger().info("Successfully executed path following")
+        else:
+            self.get_logger().error("Failed to execute path following")
         self.robot_task_event.set()
         '''self.publish_velocities(local_path[0], local_path[1])
         

@@ -88,6 +88,7 @@ class QoSBridge(Node):
         )
 
         # TF topic bridge
+        self.tf_buffer = tf2_ros.Buffer()
         self.tf_publisher = self.create_publisher(TFMessage, '/tf', tf_pub_qos)
         self.tf_subscription = self.create_subscription(
             TFMessage,
@@ -224,12 +225,15 @@ class QoSBridge(Node):
         except Exception as e:
             self.get_logger().error(f'Error in static TF callback: {str(e)}')
 
+
     def publish_initial_pose(self):
-        
+        #if not self.tf_buffer.can_transform('map', 'odom', rclpy.time.Time()):
+        #    self.get_logger().warn("TF not ready, retrying initial pose...", throttle_duration_sec=1.0)
+        #    return
 
         init_pose_msg = PoseWithCovarianceStamped()
         init_pose_msg.header.frame_id = "map"
-        init_pose_msg.header.stamp = self.get_clock().now().to_msg()
+        init_pose_msg.header.stamp = self.get_clock().now().to_msg() - rclpy.time.Duration(seconds=0.1)
 
         # Set your desired initial position
         init_pose_msg.pose.pose.position.x = self.initial_x
