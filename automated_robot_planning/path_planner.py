@@ -21,7 +21,7 @@ from sensor_msgs.msg import JointState
 from nav_msgs.msg import Path, Odometry
 import tf_transformations
 import tf2_ros
-from nav2_msgs.action import FollowPath
+from nav2_msgs.action import FollowPath, ComputePathToPose
 from rclpy.action import ActionClient
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan
@@ -29,6 +29,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import TransformStamped
 import asyncio
 from dubins import DubinsPath
+from dubins_curve import Dubins
 
 collision_detected = False
 
@@ -54,8 +55,7 @@ class PathPlanner(Node):
         self.const_linear_velocity = [0.2, 0.0, 0.5]
         self.walls = [] 
         self.solid_obs = []
-        self.q_goal = PoseStamped()
-        self.goal_point = (0.0, 0.0, 0.0)
+
         
         #self.robot = ObstacleDetector.polygon_offsetting(robot, 0.1, isRobot=True)
         self.safety_distance = 0.1
@@ -82,8 +82,8 @@ class PathPlanner(Node):
         self.start_pose.pose.orientation.z = q[2]
         self.start_pose.pose.orientation.w = q[3]
 
-        self.goal_pose = None
-        self.gate_position = None
+        self.goal_pose = PoseStamped()
+        self.gate_position = PoseArray()
         qos_profile = QoSProfile(
             depth=20,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -121,7 +121,9 @@ class PathPlanner(Node):
         self.tf_timer = self.create_timer(0.02, self.publish_tf)  # 50Hz'''
 
         self.path_pub = self.create_publisher(Path, f'/{self.namespace}/plan', 10)
+        self.path_pub1 = self.create_publisher(Path, f'/{self.namespace}/plan1', 10)
         self.follow_path_client = ActionClient(self, FollowPath, f'/{self.namespace}/follow_path')
+        self.compute_path_client = ActionClient(self, ComputePathToPose, f'/{self.namespace}/compute_path_to_pose')
         self.plan_timer = self.create_timer(1.0, self.robot_task)
 
         # Define QoS profile for the publisher
@@ -157,13 +159,39 @@ class PathPlanner(Node):
         self.robot_task_event = asyncio.Event()
         self.navigation_complete = asyncio.Event()
 
+    # ################################ These three functions are part of the logic that calls the action server for computing a path, and then saving that path object in the dedicated dictionary. ######################
+    def compute_robots_paths(self):
+
+        self.get_logger().info(f'{robot_name}')
+
+        goal_msg = ComputePathToPose.Goal()
+
+        goal_msg.goal.header.frame_id = 'map'
+        goal_msg.goal.pose.position.x = self.goal_pose.pose.position.x
+        goal_msg.goal.pose.position.y = self.goal_pose.pose.position.y
+
+        self.compute_path_client.wait_for_server()
+        robot_future = self.compute_path_client.send_goal_async(goal_msg)
+        robot_future.add_done_callback(lambda msg: self.compute_robots_paths_response_callback(msg))
+
+    def compute_robots_paths_response_callback(self, future):
+        goal_handle = future.result()
+        self._get_results_future = goal_handle.get_result_async()
+        self._get_results_future.add_done_callback(lambda msg: self.compute_robots_paths_result_callback(msg))
+
+    def compute_robots_paths_result_callback(self, future):
+        self.robot_paths[self.namespace] = future.result().result.path
+        self.robot_paths_todo[self.namespace] = future.result().result.path
+
+
+
     def gate_position_callback(self, msg):
      
         self.get_logger().info(f'Received {len(msg.poses)} gate positions')
         self.gate_position = msg.poses[0]
         self.get_logger().info(f'Gate position: x={self.gate_position.position.x}, y={self.gate_position.position.y}')   
         self.goal_pose = PoseStamped()
-        self.goal_pose.header.frame_id = self.start_pose.header.frame_id  # Assuming gate position is in the map frame
+        self.goal_pose.header.frame_id = 'map' # Assuming gate position is in the map frame
         self.goal_pose.header.stamp = self.get_clock().now().to_msg()
         self.goal_pose.pose.position.x = self.gate_position.position.x
         self.goal_pose.pose.position.y = self.gate_position.position.y
@@ -173,7 +201,8 @@ class PathPlanner(Node):
         self.goal_pose.pose.orientation.z = self.gate_position.orientation.z
         self.goal_pose.pose.orientation.w = self.gate_position.orientation.w 
         #_, _, yaw = tf_transformations.euler_from_quaternion([self.goal_pose.pose.orientation.x, self.goal_pose.pose.orientation.y, self.goal_pose.pose.orientation.z, self.goal_pose.pose.orientation.w])
-        self.goal_pose_publisher.publish(self.goal_pose)
+        #self.goal_pose_publisher.publish(self.goal_pose)
+        #self.compute_robots_paths()
         self.goal_set_event.set()
         self.get_logger().info('Published goal to goal_pose')
         self.robot_task() 
@@ -233,23 +262,30 @@ class PathPlanner(Node):
         for attempt in range(max_retries):
             try:
                 # Wait for the action server to become available
+                index = len(path_msg.poses)
                 if not self.follow_path_client.wait_for_server(timeout_sec=5.0):
                     self.get_logger().warn(f'Action server not available, attempt {attempt + 1}/{max_retries}')
                     time.sleep(1.0)
                     continue
 
                 self.get_logger().info('Action server is available')
-
+                print("hiiiiiiiiiiiiiiii", index)
                 # Create goal message
                 goal_msg = FollowPath.Goal()
-                goal_msg.path = path_msg
-                #goal_msg.controller_id = "FollowPath"
-                #goal_msg.goal_checker_id = "simple_goal_checker"
-                #goal_msg.progress_checker_id = "simple_progress_checker"
+                goal_msg.path.poses = path_msg.poses[:index]
+                goal_msg.path.header.frame_id = 'map'
+                goal_msg.path.header.stamp = self.get_clock().now().to_msg()
+
+                goal_msg.goal_checker_id = "goal_checker"
+                goal_msg.controller_id = "FollowPath"
+
+                # send the final path to the robot
+                self.follow_path_client.wait_for_server()
+                self.follow_path_client.send_goal_async(goal_msg)
 
                 self.get_logger().info('Sending path to FollowPath action server')
 
-                # Send goal and wait synchronously for it to be sent
+                '''# Send goal and wait synchronously for it to be sent
                 send_goal_future = self.follow_path_client.send_goal_async(goal_msg)
                 rclpy.spin_until_future_complete(self, send_goal_future)
                 goal_handle = send_goal_future.result()
@@ -270,7 +306,7 @@ class PathPlanner(Node):
                     self.get_logger().info(f'FollowPath result: {result.status}')
                     if hasattr(result, 'result') and hasattr(result.result, 'error_code'):
                         self.get_logger().info(f"FollowPath result code: {result.result.error_code}")
-                        self.get_logger().info(f"Error string: {result.result.error_string}")
+                        self.get_logger().info(f"Error string: {result.result.error_string}")'''
                 self.navigation_complete.set()
                 return True
 
@@ -627,45 +663,74 @@ class PathPlanner(Node):
         return yaw
 
     def robot_task(self):
-        
+        # Check if this task has already been executed for this namespace
+        if hasattr(self, '_task_executed') and self._task_executed:
+            self.get_logger().info(f"Task already executed for namespace: {self.namespace}")
+            return
+            
         # Check if goal_pose is set
         if self.goal_pose is None or not hasattr(self.goal_pose, 'pose'):
             self.get_logger().info("Waiting for goal pose to be set...")
             return
+        if (self.goal_pose.pose.position.x == 0.0 or 
+            self.goal_pose.pose.position.y == 0.0 or 
+            self.goal_pose.pose.position.z == 0.0):
+            self.get_logger().warn('Received invalid goal position (0.0, 0.0, 0.0), ignoring...')
+            return
+        if hasattr(self, 'plan_timer') and self.plan_timer is not None:
+            self.plan_timer.cancel()
+            self.plan_timer = None
+        try:
+            # Mark task as started
+            self._task_executed = True
             
-        # Get start pose from start_pose
-        start = self.pose_to_tuple(self.start_pose.pose)
-        goal = self.pose_to_tuple(self.goal_pose.pose)
-        
-        self.get_logger().info(f"Starting robot task with start: {start}, goal: {goal}")
-        
-        graph = [start]
-        self.parents = {graph[0]: None} 
-        
-        self.get_logger().info(f"Planning trajectory to goal: {goal}")
-        graph = self.get_trajectory(goal, graph)
-        self.get_logger().info(f"Generated trajectory with {len(graph)} points")
+            # Get start pose from start_pose
+            start = self.pose_to_tuple(self.start_pose.pose)
+            goal = self.pose_to_tuple(self.goal_pose.pose)
+            
+            self.get_logger().info(f"Starting robot task for {self.namespace} with start: {start}, goal: {goal}")
+            
+            graph = [start]
+            self.parents = {graph[0]: None} 
+            
+            self.get_logger().info(f"Planning trajectory to goal: {goal}")
+            graph = self.get_trajectory(goal, graph)
+            self.get_logger().info(f"Generated trajectory with {len(graph)} points")
 
-
-        path_msg = Path()
-        path_msg.header.frame_id = self.start_pose.header.frame_id
-
-        for q in graph:
-            pose = PoseStamped()
-            pose.header.frame_id = path_msg.header.frame_id
-            # Convert numpy arrays to float values for ROS2 Point message
-            x_val = float(q[0]) if hasattr(q[0], '__iter__') else q[0]
-            y_val = float(q[1]) if hasattr(q[1], '__iter__') else q[1]
-            yaw_val = float(q[2]) if hasattr(q[2], '__iter__') else q[2]
-            pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
-            pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
-            path_msg.poses.append(pose)
-        self.path_pub.publish(path_msg)
-        self.publish_path_to_gazebo(path_msg)
-        self.get_logger().info(f"Published path with {len(path_msg.poses)} poses")
-        self.path_published_event.set()
+            path_msg = Path()
+            path_msg.header.frame_id = 'map'
+            path_msg.header.stamp = self.get_clock().now().to_msg()
+            if graph:
+                self.get_logger().info(f"First Dubins point: {graph[0]}")
+                self.get_logger().info(f"Last Dubins point: {graph[-1]}")
+            for i, q in enumerate(graph):
+                pose = PoseStamped()
+                pose.header.frame_id = 'map'
+                pose.header.stamp = self.get_clock().now().to_msg()
+                # Convert numpy arrays to float values for ROS2 Point message
+                x_val = float(q[0])
+                y_val = float(q[1])
+                yaw_val = float(q[2])
+                pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
+                pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
+                path_msg.poses.append(pose)
+            for i, pose in enumerate(path_msg.poses[:5]):  # First 5 points
+                self.get_logger().info(f"First 5 Path point {i}: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})")
+            for i, pose in enumerate(path_msg.poses[-5:]):  # Last 5 points
+                self.get_logger().info(f"Last 5 Path point {i}: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})")
+            self.get_logger().info(f"Final path_msg has {len(path_msg.poses)} poses")
+            self.path_pub.publish(path_msg)
+            self.publish_path_to_gazebo(path_msg)
+            self.get_logger().info(f"Published path with {len(path_msg.poses)} poses for {self.namespace}")
+            self.path_published_event.set()
+            
+        except Exception as e:
+            self.get_logger().error(f"Error in robot_task for {self.namespace}: {str(e)}")
+            # Reset the flag to allow retry
+            self._task_executed = False
+            raise
         #waypoints_list, segments = self.get_waypoints(in_pose, graph)
-        for i in range(len(graph) - 1):
+        '''for i in range(len(graph) - 1):
             local_path_msg = Path()
             local_path_msg.header.frame_id = self.start_pose.header.frame_id
             start = graph[i]
@@ -673,19 +738,24 @@ class PathPlanner(Node):
             self.get_logger().info(f"Processing segment {i+1}/{len(graph)-1}: {start} -> {end}")
             
             dubins_path = DubinsPath(start, end, 0.5)   
-            local_path = dubins_path.plan_path(start, end)
-            self.get_logger().info(f"Planned Dubins path with {len(local_path[0]) if local_path and len(local_path) > 0 else 0} points")
-            
-            local_path_msg.header.frame_id = self.start_pose.header.frame_id
-            for q in local_path:
-                pose = PoseStamped()
-                pose.header.frame_id = path_msg.header.frame_id
-                x_val = float(q[0]) if hasattr(q[0], '__iter__') else q[0]
-                y_val = float(q[1]) if hasattr(q[1], '__iter__') else q[1]
-                yaw_val = float(q[2]) if hasattr(q[2], '__iter__') else q[2]
-                pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
-                pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
-                local_path_msg.poses.append(pose)
+            local_path = dubins_path.plan_path(start, end)'''
+
+        generator = Dubins(3, 0.5)
+        local_path = generator.run(graph)    
+        self.get_logger().info(f"Planned Dubins path with {len(local_path)} points")
+        local_path_msg = Path()
+        local_path_msg.header.frame_id = 'map'
+        for q in local_path:
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+            x_val = float(q[0])
+            y_val = float(q[1])
+            yaw_val = float(q[2])
+            pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
+            pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
+            local_path_msg.poses.append(pose)
+        
+        
         self.get_logger().info("Sending path to follow action server")
         self.get_logger().info(f"Sending path with {len(local_path_msg.poses)} points to follow action server")    
         success = self.send_follow_path_goal(local_path_msg)
@@ -860,10 +930,12 @@ class PathPlanner(Node):
                 return (x, y, theta)
         return None  # No free point found
 
-    def get_trajectory(self, q_goal, graph):
+
+    '''def get_trajectory(self, q_goal, graph):        
         self.get_logger().info("Starting trajectory planning...")
         self.get_logger().info(f"Start position: {graph[0]}")
         self.get_logger().info(f"Goal position: {q_goal}")
+        q_init = graph[0]
 
         q_init = graph[0]
         iteration = 0
@@ -871,6 +943,90 @@ class PathPlanner(Node):
 
         goal_sample_rate = 0.1  # 10% of the time, sample the goal directly
         step_size = 0.05        # Maximum extension length
+        workspace_bounds = [(-6.0, 6.0), (-6.0, 6.0), (-math.pi, math.pi)]  # Example bounds
+
+        stuck_counter = 0  # Track how long we've been stuck at same best distance
+        best_distance = self.get_cost(q_goal, q_init)
+
+        start_time = self.get_clock().now()
+        last_log_time = start_time
+
+        while self.get_cost(q_goal, q_init) > 0.05 and iteration < max_iterations:       
+            q_random = [np.random.uniform(q_goal[0]-0.05, q_goal[0]+0.05), 
+                        np.random.uniform(q_goal[1]-0.05, q_goal[1]+0.05),
+                        np.random.uniform(q_goal[2]-0.05, q_goal[2]+0.05)] 
+            iteration += 1
+            current_time = self.get_clock().now()
+
+            # Log progress periodically
+            if iteration % 100 == 0 or (current_time - last_log_time).nanoseconds > 5e9:
+                self.get_logger().info(
+                    f"Iteration: {iteration}, Current best distance to goal: {self.get_cost(q_goal, q_init):.3f}"
+                )
+                last_log_time = current_time
+
+            # Check if we're stuck (distance not improving)
+            current_distance = self.get_cost(q_goal, q_init)
+            if abs(current_distance - best_distance) < 1e-3:
+                stuck_counter += 1
+            else:
+                stuck_counter = 0
+                best_distance = current_distance
+
+            # If stuck for too many iterations, jump to a random free-space point
+            if stuck_counter > 500:
+                random_free_point = self.sample_random_free_space()
+                if random_free_point:
+                    self.get_logger().info(f"random free point: {random_free_point}")
+                    self.get_logger().warn(f"Stuck detected. Jumping to new free point: {random_free_point}")
+                    q_init = random_free_point
+                    graph.append(q_init)
+                stuck_counter = 0
+                continue
+
+            if self.is_in_free_space(q_random):
+                q_nearest = self.nearest(graph, q_random) 
+                q_new = self.extend(q_nearest, q_random)
+                min_cost = self.get_cost(q_goal, q_nearest)
+                near_nodes = [node for node in graph if (self.get_cost(q_new, node) <= min_cost)] 
+                for idx, near_node in enumerate(near_nodes):
+                    if self.is_in_free_space(q_new):                   
+                        new_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
+                        if new_cost < min_cost:
+                            min_cost = new_cost
+                    else:
+                        continue
+                #if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
+                graph.append(q_new)
+                for idx, near_node in enumerate(near_nodes):
+                    if self.is_in_free_space(near_node): 
+                        if (self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node))<self.get_cost(q_goal, near_node):
+                            self.rewire(near_nodes, idx, q_new) 
+                    else:
+                        continue 
+                self.get_logger().info(f"new point added: {q_new}")
+                q_init = q_new  
+        if iteration >= max_iterations:
+            self.get_logger().warn(f"Reached max iterations ({max_iterations}) without goal")
+            self.get_logger().warn(f"Closest distance achieved: {self.get_cost(q_goal, q_init):.3f}")
+
+        planning_time = (self.get_clock().now() - start_time).nanoseconds / 1e9
+        self.get_logger().info(f"Trajectory planning completed in {planning_time:.2f} seconds")
+        self.get_logger().info(f"Final path has {len(graph)} nodes") 
+        
+        return graph'''
+
+    def get_trajectory(self, q_goal, graph):
+        self.get_logger().info("Starting trajectory planning...")
+        self.get_logger().info(f"Start position: {graph[0]}")
+        self.get_logger().info(f"Goal position: {q_goal}")
+        
+        q_init = graph[0]
+        iteration = 0
+        max_iterations = 1000
+
+        goal_sample_rate = 0.3  # 10% of the time, sample the goal directly
+        step_size = 0.1        # Maximum extension length
         workspace_bounds = [(-6.0, 6.0), (-6.0, 6.0), (-math.pi, math.pi)]  # Example bounds
 
         stuck_counter = 0  # Track how long we've been stuck at same best distance
@@ -902,7 +1058,10 @@ class PathPlanner(Node):
             if stuck_counter > 200:
                 random_free_point = self.sample_random_free_space()
                 if random_free_point:
-                    self.get_logger().warn(f"Stuck detected. Jumping to new free point: {random_free_point}")
+                    self.get_logger().warn(
+                        f"Stuck detected at position {q_init}. "
+                        f"Jumping to new free point: {random_free_point}"
+                    )
                     q_init = random_free_point
                     graph.append(q_init)
                 stuck_counter = 0
@@ -963,9 +1122,10 @@ class PathPlanner(Node):
                 new_cost = self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node)
                 if new_cost < current_cost:
                     self.rewire(near_nodes, idx, q_new)
-
+            self.get_logger().info(f"New point: {q_new}")
             # Update current best
             q_init = q_new
+            self.get_logger().info(f"Current best: {q_init}")
 
         if iteration >= max_iterations:
             self.get_logger().warn(f"Reached max iterations ({max_iterations}) without goal")
@@ -976,19 +1136,6 @@ class PathPlanner(Node):
         self.get_logger().info(f"Final path has {len(graph)} nodes")
 
         return graph
-
-
-
-
-    def is_joint_okay(self, q_result):
-        for i, joint in enumerate(self.robot_desc.joints):
-            if q_result[i]>=joint.limit.lower and q_result[i]<=joint.limit.upper:
-                print('Joint conf okay')
-                if i==3:
-                    break
-            else:
-                return False
-        return True
 
 
     def is_singular(self, J):
@@ -1033,9 +1180,9 @@ class PathPlanner(Node):
 
 
     def quaternion_to_yaw(self, q: Quaternion):
-        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
-        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
-        return math.atan2(siny_cosp, cosy_cosp)
+        _, _, gateyaw = tf_transformations.euler_from_quaternion([q.x, q.y, q.z, q.w])
+
+        return (gateyaw + math.pi) % (2 * math.pi) - math.pi
 
 '''class DubinsPath():
     def __init__(self, start, end):
