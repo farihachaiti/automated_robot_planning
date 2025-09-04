@@ -41,22 +41,22 @@ class PathPlanner(Node):
         robot_name = self.get_parameter('robot_name').get_parameter_value().string_value.strip().rstrip('/')
         self.namespace = robot_name
         #self.controller_node = controller_node   
-        self.raytrace_min_range = 0.0
-        self.raytrace_max_range = 3.0
-        self.costmap_resolution = 0.05000000074505806
-        self.costmap_size = [60, 60]
-        self.costmap_origin = (- (self.costmap_size[0] * self.costmap_resolution) / 2, - (self.costmap_size[1] * self.costmap_resolution) / 2)
-        self.local_costmap = np.zeros(
-            (self.costmap_size[1], self.costmap_size[0]),  # (height, width)
-            dtype=np.int8
-        )
+
 
         #self.gate_position = gate_position 
         self.const_linear_velocity = [0.2, 0.0, 0.5]
         self.walls = [] 
         self.solid_obs = []
 
-        
+        self.raytrace_min_range = 0.0
+        self.raytrace_max_range = 3.0
+        self.costmap_resolution = 0.05000000074505806
+        self.costmap_size = [60, 60]
+        self.costmap_origin = (-1.45, -1.45)
+        self.local_costmap = np.zeros(
+            (60, 60),  # (height, width)
+            dtype=np.int8
+        )
         #self.robot = ObstacleDetector.polygon_offsetting(robot, 0.1, isRobot=True)
         self.safety_distance = 0.1
         self.obstacle_threshold = 1
@@ -424,7 +424,31 @@ class PathPlanner(Node):
             self.costmap_height = msg.info.height
             self.costmap_size = (self.costmap_width, self.costmap_height)
             data = np.array(msg.data, dtype=np.int8).reshape((self.costmap_height, self.costmap_width))
-            self.local_costmap = data   
+            self.local_costmap = data 
+
+            '''width = msg.info.width
+            height = msg.info.height
+            resolution = msg.info.resolution
+            origin_x = msg.info.origin.position.x
+            origin_y = msg.info.origin.position.y
+            print('local costmap shape', self.local_costmap.shape[0], self.local_costmap.shape[1])
+            self.get_logger().info(f'Costmap dimensions: {width} × {height}')
+            self.get_logger().info(f'Resolution: {resolution} m/cell')
+            self.get_logger().info(f'Origin: ({origin_x:.2f}, {origin_y:.2f})')
+
+            # Convert the 1D data list to a 2D numpy array for easy inspection
+            cost_array = np.array(msg.data, dtype=int).reshape((height, width))
+            self.get_logger().info(f'Costmap array shape: {cost_array.shape}')
+            
+            
+            # Example: Check value at cell (row=0, col=0), and the center cell
+            self.get_logger().info(f'Cell (0, 0) cost: {cost_array[0, 0]}')
+            self.get_logger().info(f'Center cell cost: {cost_array[height // 2, width // 2]}')
+
+            # Optional: Simple analysis
+            free_cells = (cost_array >= 0) & (cost_array < 50)  # e.g. treat <50 as free
+            free_ratio = np.mean(free_cells)
+            self.get_logger().info(f'Free space proportion: {free_ratio:.2%}') '''
         except Exception as e:
             self.get_logger().error(f"Local Costmap Callback failed: {e}")
 
@@ -696,13 +720,12 @@ class PathPlanner(Node):
             self.get_logger().info(f"Planning trajectory to goal: {goal}")
             graph = self.get_trajectory(goal, graph)
             self.get_logger().info(f"Generated trajectory with {len(graph)} points")
+            for i, point in enumerate(graph):
+                self.get_logger().info(f"Point {i}: {point}")
 
             path_msg = Path()
             path_msg.header.frame_id = 'map'
             path_msg.header.stamp = self.get_clock().now().to_msg()
-            if graph:
-                self.get_logger().info(f"First Dubins point: {graph[0]}")
-                self.get_logger().info(f"Last Dubins point: {graph[-1]}")
             for i, q in enumerate(graph):
                 pose = PoseStamped()
                 pose.header.frame_id = 'map'
@@ -907,29 +930,115 @@ class PathPlanner(Node):
 
     def is_in_free_space(self, q):
         try:
-            mx, my = self.world_to_map(q[0], q[1])
-            return (0 <= mx < self.local_costmap.shape[0] and
-                    0 <= my < self.local_costmap.shape[1] and
-                    self.local_costmap[mx, my] < 50)  # threshold
-        except:
+            map_x, map_y = self.world_to_map(q[0], q[1])
+            rows, cols = self.local_costmap.shape
+
+            if not (0 <= map_y < rows and 0 <= map_x < cols):
+                return False
+
+            cost_value = self.local_costmap[map_y, map_x]
+            return cost_value == 0  # only consider exactly 0 as free
+        except Exception:
             return False
 
-    def sample_random_free_space(self, max_attempts=1000):
-        """
-        Pick a random point anywhere in the costmap that is free.
-        Returns tuple (x, y, theta)
-        """
-        for _ in range(max_attempts):
-            # Sample world coordinates within map bounds
-            x = np.random.uniform(self.costmap_origin[0],
-                                self.costmap_origin[0] + self.local_costmap.shape[0] * self.costmap_resolution)
-            y = np.random.uniform(self.costmap_origin[1],
-                                self.costmap_origin[1] + self.local_costmap.shape[1] * self.costmap_resolution)
-            theta = np.random.uniform(-math.pi, math.pi)
-            if self.is_in_free_space((x, y, theta)):
-                return (x, y, theta)
-        return None  # No free point found
 
+    def interpolate_to_target_point(self, last_point, target_point):
+        """
+        Interpolate one point along a Dubins path to the target point using cubic spline interpolation.
+        """
+        # Define the parameter space
+        t = np.array([0, 1])  # Two control points
+        
+        # Ensure last_point and target_point are 1D arrays
+        last_point = np.array(last_point)
+        target_point = np.array(target_point)
+        
+        # Ensure dubins_points is a 2D array with two rows
+        
+        dubins_points = np.vstack((last_point, target_point))
+
+        spline = CubicSpline(t, dubins_points)
+        
+        # Evaluate the spline at t=0.5 to get the interpolated point
+        interpolated_point = spline(0.05)
+        
+        return tuple(interpolated_point)
+
+    def sample_random_free_space(self, q_goal, max_attempts=10000000, goal_bias=0.1):
+        """
+        Pick a random point in the costmap that is free, with a bias towards the goal.
+        
+        Args:
+            max_attempts: Maximum number of sampling attempts
+            goal_bias: Probability (0-1) of sampling the goal position directly
+            
+        Returns:
+            tuple: (x, y, theta) of a valid configuration, or None if none found
+        """
+        goal_pose = self.pose_to_tuple(self.goal_pose.pose) if hasattr(self, 'goal_pose') else None
+        
+        for _ in range(max_attempts):
+            # With probability goal_bias, sample the goal position
+            if goal_pose and np.random.random() < goal_bias:
+                x, y, theta = goal_pose
+                
+            else:
+                x, y, theta = [np.random.uniform(q_goal[0]-0.5, q_goal[0]+0.5), 
+                        np.random.uniform(q_goal[1]-0.5, q_goal[1]+0.5),
+                        np.random.uniform(q_goal[2]-0.5, q_goal[2]+0.5)] 
+            
+            #if self.is_in_free_space((x, y, theta)):
+            return (x, y, theta)
+ 
+        return None  # No free point found
+    
+    def sample_point(self, q_goal, max_attempts=100000, goal_bias=0.1):
+        """
+        Pick a random point in the costmap that is free, with a bias towards the goal.
+        If a point is not in free space, gradually increases the sampling range.
+        
+        Args:
+            q_goal: The goal configuration (x, y, theta)
+            max_attempts: Maximum number of sampling attempts per range
+            goal_bias: Probability (0-1) of sampling the goal position directly
+            
+        Returns:
+            tuple: (x, y, theta) of a valid configuration, or None if none found
+        """
+       
+        
+        # Define the initial and maximum range for sampling around the goal
+        initial_range = 10.0
+        min_range = 0.5  # Maximum range to avoid sampling too far
+        range_decrement = 1.0  # How much to increase the range each time
+        
+        current_range = initial_range
+        
+        while current_range >= min_range:
+            for _ in range(max_attempts):
+                # With probability goal_bias, sample the goal position directly
+                if q_goal and np.random.random() < goal_bias:
+                    x, y, theta = q_goal
+                    if self.is_in_free_space((x, y, theta)):
+                        return (x, y, theta)
+                
+                # Sample within current range around the goal
+                x = np.random.uniform(q_goal[0] - current_range, q_goal[0] + current_range)
+                y = np.random.uniform(q_goal[1] - current_range, q_goal[1] + current_range)
+                theta = np.random.uniform(q_goal[2] - current_range, q_goal[2] + current_range)
+                
+                # Check if the sampled point is in free space
+                if self.is_in_free_space((x, y, theta)):
+                    self.get_logger().info(f"Found valid point: ({x:.2f}, {y:.2f}, {theta:.2f})")
+                    return (x, y, theta)
+            
+            # If we've exhausted attempts at this range, increase the range
+            current_range -= range_increment
+            self.get_logger().debug(f"Decreased sampling range to ±{current_range:.1f}m around goal")
+        
+        # If we've tried all ranges and still haven't found a valid point
+        self.get_logger().warn("Failed to find a valid point in free space")
+        return None
 
     '''def get_trajectory(self, q_goal, graph):        
         self.get_logger().info("Starting trajectory planning...")
@@ -1016,7 +1125,45 @@ class PathPlanner(Node):
         
         return graph'''
 
-    def get_trajectory(self, q_goal, graph):
+    def get_trajectory(self, q_goal, graph):        
+        q_init = graph[0]
+        iteration = 0
+        max_iterations = 100
+        while self.get_cost(q_goal, q_init)>0.3 and iteration < max_iterations:        
+            q_random = self.sample_point(q_goal)   
+            if self.is_in_free_space(q_random):
+                q_nearest = self.nearest(graph, q_random)
+                q_new = self.extend(q_nearest, q_random)
+                min_cost = self.get_cost(q_goal, q_nearest)
+                near_nodes = [node for node in graph if (self.get_cost(q_new, node) <= min_cost)] 
+                for idx, near_node in enumerate(near_nodes):
+                    if self.is_in_free_space(q_new):                   
+                        new_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
+                        if new_cost < min_cost:
+                            min_cost = new_cost
+                    else:
+                        continue
+                #if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
+                graph.append(q_new)
+                self.get_logger().info(f"New node added: {q_new}")
+                for idx, near_node in enumerate(near_nodes):
+                    if self.is_in_free_space(near_node):
+                        if (self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node))<self.get_cost(q_goal, near_node):
+                            self.rewire(near_nodes, idx, q_new) 
+                    else:
+                        continue 
+                q_init = q_new 
+            else:
+                continue
+            self.get_logger().info(
+                f"Current best distance to goal: {self.get_cost(q_goal, q_init):.3f}"
+            )
+            iteration += 1
+            
+        return graph
+
+
+    def get_trajectory_new(self, q_goal, graph):
         self.get_logger().info("Starting trajectory planning...")
         self.get_logger().info(f"Start position: {graph[0]}")
         self.get_logger().info(f"Goal position: {q_goal}")
@@ -1056,7 +1203,8 @@ class PathPlanner(Node):
 
             # If stuck for too many iterations, jump to a random free-space point
             if stuck_counter > 200:
-                random_free_point = self.sample_random_free_space()
+                #random_free_point = self.interpolate_to_target_point(q_init, q_goal)
+                random_free_point = self.sample_random_free_space(q_goal)
                 if random_free_point:
                     self.get_logger().warn(
                         f"Stuck detected at position {q_init}. "
@@ -1071,16 +1219,17 @@ class PathPlanner(Node):
             if np.random.rand() < goal_sample_rate:
                 q_random = q_goal
             else:
-                q_random = tuple(
+                '''q_random = tuple(
                     np.random.uniform(low, high) for low, high in workspace_bounds
-                )
-
+                )'''
+                q_random = self.sample_point(q_goal)
+            
             # Skip if random sample is in collision
             if not self.is_in_free_space(q_random):
                 if iteration % 200 == 0:
                     self.get_logger().debug(f"Skipping colliding sample at {q_random}")
                 continue
-
+      
             # Find nearest node in tree
             q_nearest = self.nearest(graph, q_random)
 
@@ -1090,7 +1239,7 @@ class PathPlanner(Node):
             if dist > step_size:
                 direction = direction / dist * step_size
             q_new = tuple(np.array(q_nearest) + direction)
-
+            #q_new = q_random
             # Skip if q_new itself is in collision
             if not self.is_in_free_space(q_new):
                 continue
@@ -1112,6 +1261,7 @@ class PathPlanner(Node):
 
             # Add new node
             self.parents[q_new] = best_parent
+            self.get_logger().info(f"New node added: {q_new}")
             graph.append(q_new)
 
             # Rewire
