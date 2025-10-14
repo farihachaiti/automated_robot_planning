@@ -319,7 +319,7 @@ class Dubins(Curve):
 		Parameters:
 			points (list[tuple]): path points
 		"""
-		assert len(points) >= 2, "Number of points should be at least 2."
+		#assert len(points) >= 2, "Number of points should be at least 2."
 		import matplotlib.pyplot as plt
 
 		# generation

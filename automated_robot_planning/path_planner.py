@@ -30,6 +30,9 @@ from geometry_msgs.msg import TransformStamped
 import asyncio
 from dubins import DubinsPath
 from dubins_curve import Dubins
+from rcl_interfaces.msg import ParameterDescriptor
+from rcl_interfaces.msg import ParameterType
+from rclpy.parameter import Parameter
 
 collision_detected = False
 
@@ -66,6 +69,17 @@ class PathPlanner(Node):
         self.declare_parameter('initial_x', 0.0)
         self.declare_parameter('initial_y', 0.0)
         self.declare_parameter('initial_yaw', 0.0)
+
+        self.declare_parameter(
+        'obstacles',
+        "",
+        ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
+    )
+
+        obstacles = self.get_parameter('obstacles').get_parameter_value().string_value
+        flat_obstacles = [float(x) for x in obstacles.split(',')]
+        # Now reconstruct as needed
+        self.obstacles = [(flat_obstacles[i], flat_obstacles[i+1], flat_obstacles[i+2]) for i in range(0, len(flat_obstacles), 3)]
 
         self.initial_x = self.get_parameter('initial_x').value
         self.initial_y = self.get_parameter('initial_y').value
@@ -781,7 +795,8 @@ class PathPlanner(Node):
         
         self.get_logger().info("Sending path to follow action server")
         self.get_logger().info(f"Sending path with {len(local_path_msg.poses)} points to follow action server")    
-        success = self.send_follow_path_goal(local_path_msg)
+        #success = self.send_follow_path_goal(local_path_msg)
+        success = self.send_follow_path_goal(path_msg)
         if success:
             self.get_logger().info("Successfully executed path following")
         else:
@@ -1008,10 +1023,10 @@ class PathPlanner(Node):
        
         
         # Define the initial and maximum range for sampling around the goal
-        initial_range = 10.0
+        initial_range = 5.0
         min_range = 0.5  # Maximum range to avoid sampling too far
         range_decrement = 1.0  # How much to increase the range each time
-        
+        workspace_bounds = [(-6.0, 6.0), (-6.0, 6.0), (-math.pi, math.pi)] 
         current_range = initial_range
         
         while current_range >= min_range:
@@ -1019,22 +1034,30 @@ class PathPlanner(Node):
                 # With probability goal_bias, sample the goal position directly
                 if q_goal and np.random.random() < goal_bias:
                     x, y, theta = q_goal
-                    if self.is_in_free_space((x, y, theta)):
-                        return (x, y, theta)
+                    #if self.is_in_free_space((x, y, theta)):
+                    return (x, y, theta)
                 
                 # Sample within current range around the goal
+                '''q_random = tuple(
+                    np.random.uniform(low, high) for low, high in workspace_bounds
+                )'''
+                
+           
                 x = np.random.uniform(q_goal[0] - current_range, q_goal[0] + current_range)
                 y = np.random.uniform(q_goal[1] - current_range, q_goal[1] + current_range)
                 theta = np.random.uniform(q_goal[2] - current_range, q_goal[2] + current_range)
+                self.get_logger().info(f"Point found: ({x:.2f}, {y:.2f}, {theta:.2f})")
                 
                 # Check if the sampled point is in free space
-                if self.is_in_free_space((x, y, theta)):
-                    self.get_logger().info(f"Found valid point: ({x:.2f}, {y:.2f}, {theta:.2f})")
-                    return (x, y, theta)
+                #if self.is_in_free_space((x, y, theta)):
+                #    self.get_logger().info(f"Found valid point: ({x:.2f}, {y:.2f}, {theta:.2f})")
+                #    return (x, y, theta)
             
             # If we've exhausted attempts at this range, increase the range
-            current_range -= range_increment
+            current_range -= range_decrement
             self.get_logger().debug(f"Decreased sampling range to ±{current_range:.1f}m around goal")
+        return (x, y, theta)
+        
         
         # If we've tried all ranges and still haven't found a valid point
         self.get_logger().warn("Failed to find a valid point in free space")
@@ -1125,7 +1148,7 @@ class PathPlanner(Node):
         
         return graph'''
 
-    def get_trajectory(self, q_goal, graph):        
+    def get_trajectory_actual(self, q_goal, graph):        
         q_init = graph[0]
         iteration = 0
         max_iterations = 100
@@ -1134,8 +1157,10 @@ class PathPlanner(Node):
             if self.is_in_free_space(q_random):
                 q_nearest = self.nearest(graph, q_random)
                 q_new = self.extend(q_nearest, q_random)
+                print("new node:", q_new)
                 min_cost = self.get_cost(q_goal, q_nearest)
                 near_nodes = [node for node in graph if (self.get_cost(q_new, node) <= min_cost)] 
+                print("near nodes:", near_nodes)
                 for idx, near_node in enumerate(near_nodes):
                     if self.is_in_free_space(q_new):                   
                         new_cost = self.get_cost(q_goal, near_node) + self.get_cost(q_new, near_node)
@@ -1162,6 +1187,94 @@ class PathPlanner(Node):
             
         return graph
 
+    def get_trajectory_with_costmap(self, q_goal, graph):        
+        q_init = graph[0]
+        iteration = 0
+        max_iterations = 100
+        while self.get_cost(q_goal, q_init)>0.3 and iteration < max_iterations:        
+            q_random = self.sample_point(q_goal)   
+            if self.is_in_free_space(q_random):
+                q_nearest = self.nearest(graph, q_random)
+                q_new = self.extend(q_nearest, q_random)
+                print("nearest node:", q_nearest)
+                print("random node:", q_random)
+                print("new node:", q_new)
+                graph.append(q_new)
+                q_min= q_nearest
+                min_cost = self.get_cost(q_goal, q_nearest) + self.get_cost(q_goal, q_new)
+                near_nodes = [node for node in graph if (self.get_cost(q_new, node) <= min_cost)] 
+                print("near nodes:", near_nodes)
+                for idx, near_node in enumerate(near_nodes):
+                    if self.is_in_free_space(near_node):                   
+                        new_cost = self.get_cost(q_goal, near_node) + self.get_cost(near_node, q_new)
+                        if new_cost < min_cost:
+                            min_cost = new_cost
+                            q_min = near_node
+                    else:
+                        continue
+                #if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
+                graph.append(q_min)
+                self.get_logger().info(f"New node added: {q_new}")
+                for idx, near_node in enumerate(near_nodes):
+                    if self.is_in_free_space(near_node):
+                        new_cost = self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node)
+                        if new_cost<self.get_cost(q_goal, near_node):
+                            self.rewire(near_nodes, idx, q_new) 
+                    else:
+                        continue 
+                q_init = q_new 
+                self.get_logger().info(
+                    f"Current best distance to goal: {self.get_cost(q_goal, q_init):.3f}"
+                )
+            iteration += 1
+            
+        return graph
+
+
+    def get_trajectory(self, q_goal, graph):        
+        q_init = graph[0]
+        iteration = 0
+        max_iterations = 100
+        while self.get_cost(q_goal, q_init)>0.3 and iteration < max_iterations:        
+            q_random = self.sample_point(q_goal)   
+            #if self.is_in_free_space(q_random):
+            q_nearest = self.nearest(graph, q_random)
+            q_new = self.extend(q_nearest, q_random)
+            print("nearest node:", q_nearest)
+            print("random node:", q_random)
+            print("new node:", q_new)
+            graph.append(q_new)
+            q_min= q_nearest
+            min_cost = self.get_cost(q_goal, q_nearest) + self.get_cost(q_goal, q_new)
+            near_nodes = [node for node in graph if (self.get_cost(q_new, node) <= min_cost)] 
+            print("near nodes:", near_nodes)
+            for idx, near_node in enumerate(near_nodes):
+                #if self.is_in_free_space(q_new):                   
+                new_cost = self.get_cost(q_goal, near_node) + self.get_cost(near_node, q_new)
+                if new_cost < min_cost:
+                    min_cost = new_cost
+                    q_min = near_node
+                #else:
+                #    continue
+                #if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
+            graph.append(q_min)
+            self.get_logger().info(f"New node added: {q_new}")
+            for idx, near_node in enumerate(near_nodes):
+                #if self.is_in_free_space(near_node):
+                new_cost = self.get_cost(q_goal, q_new) + self.get_cost(q_new, near_node)
+                if new_cost<self.get_cost(q_goal, near_node):
+                    self.rewire(near_nodes, idx, q_new) 
+                #else:
+                    #    continue 
+            q_init = q_new 
+            self.get_logger().info(
+                f"Current best distance to goal: {self.get_cost(q_goal, q_init):.3f}"
+            )
+            iteration += 1
+            
+        return graph
+
+    
 
     def get_trajectory_new(self, q_goal, graph):
         self.get_logger().info("Starting trajectory planning...")
