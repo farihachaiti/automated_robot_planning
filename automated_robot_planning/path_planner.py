@@ -33,6 +33,7 @@ from dubins_curve import Dubins
 from rcl_interfaces.msg import ParameterDescriptor
 from rcl_interfaces.msg import ParameterType
 from rclpy.parameter import Parameter
+from rtree import index
 
 collision_detected = False
 
@@ -50,7 +51,7 @@ class PathPlanner(Node):
         self.const_linear_velocity = [0.2, 0.0, 0.5]
         self.walls = [] 
         self.solid_obs = []
-
+        self.r = 0.5
         self.raytrace_min_range = 0.0
         self.raytrace_max_range = 3.0
         self.costmap_resolution = 0.05000000074505806
@@ -96,6 +97,23 @@ class PathPlanner(Node):
         self.start_pose.pose.orientation.z = q[2]
         self.start_pose.pose.orientation.w = q[3]
 
+        a = 10.0  # hexagon side length
+
+        # Compute workspace bounds
+        x_max = a
+        x_min = -a
+        y_max = math.sqrt(3) * a / 2
+        y_min = -math.sqrt(3) * a / 2
+
+        # Print nicely
+        print(f"x_min = {x_min:.2f}")
+        print(f"x_max = {x_max:.2f}")
+        print(f"y_min = {y_min:.2f}")
+        print(f"y_max = {y_max:.2f}")
+
+        # Optionally pack into a tuple
+        self.workspace_bounds = (x_min, y_min, x_max, y_max)
+        self.workspace_dimensions_lengths_np = np.array([(x_min, x_max), (y_min, y_max), (-math.pi, math.pi)]) 
         self.goal_pose = PoseStamped()
         self.gate_position = PoseArray()
         qos_profile = QoSProfile(
@@ -140,6 +158,16 @@ class PathPlanner(Node):
         self.compute_path_client = ActionClient(self, ComputePathToPose, f'/{self.namespace}/compute_path_to_pose')
         self.plan_timer = self.create_timer(1.0, self.robot_task)
 
+        self.obs_subscription = self.create_subscription(
+            ObstacleArrayMsg,
+            '/obstacles',
+            self.obstacle_callback,
+            QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                depth=10
+            )
+        )
         # Define QoS profile for the publisher
    
 
@@ -197,6 +225,90 @@ class PathPlanner(Node):
         self.robot_paths[self.namespace] = future.result().result.path
         self.robot_paths_todo[self.namespace] = future.result().result.path
 
+    def obstacle_callback(self, msg):
+        """
+        Callback for processing incoming obstacle data.
+        Converts obstacle messages into a format suitable for path planning.
+        """
+        self.get_logger().info(f'Received obstacle message')
+        self.get_logger().info(f'Message type: {type(msg)}')
+        self.get_logger().info(f'Message dir: {dir(msg)}')
+        self.get_logger().info(f'Has obstacles attribute: {hasattr(msg, "obstacles")}')
+        
+        if hasattr(msg, 'obstacles'):
+            self.get_logger().info(f'Number of obstacles: {len(msg.obstacles)}')
+            if len(msg.obstacles) > 0:
+                self.get_logger().info(f'First obstacle type: {type(msg.obstacles[0])}')
+                self.get_logger().info(f'First obstacle attributes: {dir(msg.obstacles[0])}')
+        else:
+            self.get_logger().warning('Message does not have obstacles attribute')
+            
+        self.obstacles = []
+
+        for i, obs in enumerate(msg.obstacles):
+            try:
+                radius = obs.radius
+                polygon = obs.polygon
+
+                self.get_logger().info(f"🧱 Obstacle {i}: radius={radius:.3f}, num_points={len(polygon.points)}")
+
+                # --- Case 1: Cylinder (radius > 0, one point = center)
+                if radius > 0.0:
+                    if not polygon.points:
+                        self.get_logger().warning(f"⚠️  Cylinder {i} has no center point — skipping.")
+                        continue
+
+                    cx = polygon.points[0].x
+                    cy = polygon.points[0].y
+                    x_min, x_max = cx - radius, cx + radius
+                    y_min, y_max = cy - radius, cy + radius
+
+                    self.get_logger().info(
+                        f"✅ Cylinder {i} center=({cx:.2f},{cy:.2f}), "
+                        f"radius={radius:.2f}, bbox=[{x_min:.2f},{x_max:.2f},{y_min:.2f},{y_max:.2f}]"
+                    )
+
+                # --- Case 2: Polygon (radius == 0, multiple points)
+                else:
+                    if not polygon.points:
+                        self.get_logger().warning(f"⚠️  Polygon {i} has no vertices — skipping.")
+                        continue
+
+                    xs = [p.x for p in polygon.points]
+                    ys = [p.y for p in polygon.points]
+
+                    x_min, x_max = min(xs), max(xs)
+                    y_min, y_max = min(ys), max(ys)
+
+                    self.get_logger().info(
+                        f"✅ Polygon {i} with {len(xs)} points, bbox=[{x_min:.2f},{x_max:.2f},{y_min:.2f},{y_max:.2f}]"
+                    )
+
+                # --- Finalize obstacle bounding box
+                z_min, z_max = 0.0, 1.0
+                obstacle_bounds = (x_min, y_min, z_min, x_max, y_max, z_max)
+                self.obstacles.append(obstacle_bounds)
+
+                self.get_logger().info(f"📦 Processed obstacle {i}: {obstacle_bounds}")
+
+            except Exception as e:
+                self.get_logger().error(f"❌ Exception processing obstacle {i}: {repr(e)}")
+
+        self.dimensions = len(self.workspace_dimensions_lengths_np)
+        p = index.Property()
+        p.dimension = self.dimensions
+        self.obstacles_np = np.array(self.obstacles) if self.obstacles else np.array([])
+        
+        if len(self.obstacles_np) > 0:
+            for i, obs in enumerate(self.obstacles_np):
+                self.get_logger().info(f"🗂️  Rtree input {i}: {obs}")
+
+            self.obs = index.Index(self.obstacle_generator(self.obstacles_np), interleaved=True, properties=p)
+            self.get_logger().info(f'Successfully processed {len(self.obstacles_np)} obstacles')
+            self.get_logger().info(f'Obstacle bounds: {self.obstacles_np}')
+        else:
+            self.obs = None
+            self.get_logger().info('No obstacles to process')
 
 
     def gate_position_callback(self, msg):
@@ -1006,6 +1118,48 @@ class PathPlanner(Node):
             return (x, y, theta)
  
         return None  # No free point found
+
+    def steer(self, start, goal, d):
+        """
+        Return a point in the direction of the goal, that is distance away from start
+        :param start: start location
+        :param goal: goal location
+        :param d: distance away from start
+        :return: point in the direction of the goal, distance away from start
+        """
+        start, end = np.array(start), np.array(goal)
+        v = end - start
+        u = v / (np.sqrt(np.sum(v ** 2)))
+        d = min(d, np.linalg.norm(goal - start))
+        steered_point = start + u * d
+        return tuple(steered_point)
+
+    def es_points_along_line(self, start, end, r):
+        """
+        Equally-spaced points along a line defined by start, end, with resolution r
+        :param start: starting point
+        :param end: ending point
+        :param r: maximum distance between points
+        :return: yields points along line from start to end, separated by distance r
+        """
+        d = np.linalg.norm(np.array(end) - np.array(start))
+        n_points = int(np.ceil(d / r))
+        if n_points > 1:
+            step = d / (n_points - 1)
+            for i in range(n_points):
+                next_point = self.steer(start, end, i * step)
+                yield next_point
+
+    
+    def obstacle_generator(self, obstacles_np):
+        for i, obs in enumerate(obstacles_np):
+            # Each obs must have 6 values (xmin, ymin, zmin, xmax, ymax, zmax)
+            if len(obs) != 6:
+                self.get_logger().warning(f"⚠️ Obstacle {i} invalid shape: {obs}")
+                continue
+            yield (i, tuple(obs), None)
+
+
     
     def sample_point(self, q_goal, max_attempts=100000, goal_bias=0.1):
         """
@@ -1243,6 +1397,10 @@ class PathPlanner(Node):
             print("nearest node:", q_nearest)
             print("random node:", q_random)
             print("new node:", q_new)
+            '''if self.collision_free(q_init, q_new, self.r):
+                graph.append(q_new)
+            else:
+                continue'''
             graph.append(q_new)
             q_min= q_nearest
             min_cost = self.get_cost(q_goal, q_nearest) + self.get_cost(q_goal, q_new)
@@ -1257,6 +1415,10 @@ class PathPlanner(Node):
                 #else:
                 #    continue
                 #if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
+            '''if self.collision_free(q_init, q_min, self.r):
+                graph.append(q_min)
+            else:
+                continue'''
             graph.append(q_min)
             self.get_logger().info(f"New node added: {q_new}")
             for idx, near_node in enumerate(near_nodes):
@@ -1274,6 +1436,25 @@ class PathPlanner(Node):
             
         return graph
 
+    def obstacle_free(self, x):
+        """
+        Check if a location resides inside of an obstacle
+        :param x: location to check
+        :return: True if not inside an obstacle, False otherwise
+        """
+        return self.obs.count(x) == 0
+
+    def collision_free(self, start, end, r):
+        """
+        Check if a line segment intersects an obstacle
+        :param start: starting point of line
+        :param end: ending point of line
+        :param r: resolution of points to sample along edge when checking for collisions
+        :return: True if line segment does not intersect an obstacle, False otherwise
+        """
+        points = self.es_points_along_line(start, end, r)
+        coll_free = all(map(self.obstacle_free, points))
+        return coll_free
     
 
     def get_trajectory_new(self, q_goal, graph):

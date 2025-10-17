@@ -218,7 +218,15 @@ def load_obstacles_from_yaml(yaml_path):
         tuple: (obstacles, map_bounds) where map_bounds is (x_min, x_max, y_min, y_max)
     """
     obstacles = []
-    map_bounds = (-6.0, 6.0, -6.0, 6.0) 
+    #map_bounds = (-6.0, 6.0, -6.0, 6.0) 
+    a = 10.0  # hexagon side length
+
+    # Compute workspace bounds
+    x_max = a
+    x_min = -a
+    y_max = math.sqrt(3) * a / 2
+    y_min = -math.sqrt(3) * a / 2
+    map_bounds = (x_min, x_max, y_min, y_max) 
     
     try:
         with open(yaml_path, 'r') as file:
