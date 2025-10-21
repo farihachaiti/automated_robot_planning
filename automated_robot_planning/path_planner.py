@@ -45,13 +45,13 @@ class PathPlanner(Node):
         robot_name = self.get_parameter('robot_name').get_parameter_value().string_value.strip().rstrip('/')
         self.namespace = robot_name
         #self.controller_node = controller_node   
-
+        self.obs = None
 
         #self.gate_position = gate_position 
         self.const_linear_velocity = [0.2, 0.0, 0.5]
         self.walls = [] 
         self.solid_obs = []
-        self.r = 0.5
+        self.r = 0.1
         self.raytrace_min_range = 0.0
         self.raytrace_max_range = 3.0
         self.costmap_resolution = 0.05000000074505806
@@ -112,9 +112,20 @@ class PathPlanner(Node):
         print(f"y_max = {y_max:.2f}")
 
         # Optionally pack into a tuple
-        self.workspace_bounds = (x_min, y_min, x_max, y_max)
+        #self.workspace_bounds = (x_min, y_min, x_max, y_max)
+        self.workspace_bounds = [(x_min, x_max), (y_min, y_max), (-math.pi, math.pi)] 
         self.workspace_dimensions_lengths_np = np.array([(x_min, x_max), (y_min, y_max), (-math.pi, math.pi)]) 
         self.goal_pose = PoseStamped()
+        self.obs_subscription = self.create_subscription(
+            ObstacleArrayMsg,
+            '/obstacles',
+            self.obstacle_callback,
+            QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                depth=10
+            )
+        )
         self.gate_position = PoseArray()
         qos_profile = QoSProfile(
             depth=20,
@@ -158,16 +169,7 @@ class PathPlanner(Node):
         self.compute_path_client = ActionClient(self, ComputePathToPose, f'/{self.namespace}/compute_path_to_pose')
         self.plan_timer = self.create_timer(1.0, self.robot_task)
 
-        self.obs_subscription = self.create_subscription(
-            ObstacleArrayMsg,
-            '/obstacles',
-            self.obstacle_callback,
-            QoSProfile(
-                reliability=ReliabilityPolicy.RELIABLE,
-                durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                depth=10
-            )
-        )
+
         # Define QoS profile for the publisher
    
 
@@ -331,7 +333,8 @@ class PathPlanner(Node):
         #self.compute_robots_paths()
         self.goal_set_event.set()
         self.get_logger().info('Published goal to goal_pose')
-        self.robot_task() 
+        if self.obs is not None:
+            self.robot_task()
         # Create goal pose from the first gate position
         
     def publish_path_to_gazebo(self, path):
@@ -814,148 +817,151 @@ class PathPlanner(Node):
 
     def robot_task(self):
         # Check if this task has already been executed for this namespace
-        if hasattr(self, '_task_executed') and self._task_executed:
-            self.get_logger().info(f"Task already executed for namespace: {self.namespace}")
-            return
-            
-        # Check if goal_pose is set
-        if self.goal_pose is None or not hasattr(self.goal_pose, 'pose'):
-            self.get_logger().info("Waiting for goal pose to be set...")
-            return
-        if (self.goal_pose.pose.position.x == 0.0 or 
-            self.goal_pose.pose.position.y == 0.0 or 
-            self.goal_pose.pose.position.z == 0.0):
-            self.get_logger().warn('Received invalid goal position (0.0, 0.0, 0.0), ignoring...')
-            return
-        if hasattr(self, 'plan_timer') and self.plan_timer is not None:
-            self.plan_timer.cancel()
-            self.plan_timer = None
-        try:
-            # Mark task as started
-            self._task_executed = True
-            
-            # Get start pose from start_pose
-            start = self.pose_to_tuple(self.start_pose.pose)
-            goal = self.pose_to_tuple(self.goal_pose.pose)
-            
-            self.get_logger().info(f"Starting robot task for {self.namespace} with start: {start}, goal: {goal}")
-            
-            graph = [start]
-            self.parents = {graph[0]: None} 
-            
-            self.get_logger().info(f"Planning trajectory to goal: {goal}")
-            graph = self.get_trajectory(goal, graph)
-            self.get_logger().info(f"Generated trajectory with {len(graph)} points")
-            for i, point in enumerate(graph):
-                self.get_logger().info(f"Point {i}: {point}")
+        if self.obs is not None:              
+            if hasattr(self, '_task_executed') and self._task_executed:
+                self.get_logger().info(f"Task already executed for namespace: {self.namespace}")
+                return
+                
+            # Check if goal_pose is set
+            if self.goal_pose is None or not hasattr(self.goal_pose, 'pose'):
+                self.get_logger().info("Waiting for goal pose to be set...")
+                return
+            if (self.goal_pose.pose.position.x == 0.0 or 
+                self.goal_pose.pose.position.y == 0.0 or 
+                self.goal_pose.pose.position.z == 0.0):
+                self.get_logger().warn('Received invalid goal position (0.0, 0.0, 0.0), ignoring...')
+                return
+            if hasattr(self, 'plan_timer') and self.plan_timer is not None:
+                self.plan_timer.cancel()
+                self.plan_timer = None
+            try:
+                # Mark task as started
+                self._task_executed = True
+                
+                # Get start pose from start_pose
+                start = self.pose_to_tuple(self.start_pose.pose)
+                goal = self.pose_to_tuple(self.goal_pose.pose)
+                
+                self.get_logger().info(f"Starting robot task for {self.namespace} with start: {start}, goal: {goal}")
+                
+                graph = [start]
+                self.parents = {graph[0]: None} 
+                
+                self.get_logger().info(f"Planning trajectory to goal: {goal}")
+                graph = self.get_trajectory(goal, graph)
+                self.get_logger().info(f"Generated trajectory with {len(graph)} points")
+                for i, point in enumerate(graph):
+                    self.get_logger().info(f"Point {i}: {point}")
 
-            path_msg = Path()
-            path_msg.header.frame_id = 'map'
-            path_msg.header.stamp = self.get_clock().now().to_msg()
-            for i, q in enumerate(graph):
+                path_msg = Path()
+                path_msg.header.frame_id = 'map'
+                path_msg.header.stamp = self.get_clock().now().to_msg()
+                for i, q in enumerate(graph):
+                    pose = PoseStamped()
+                    pose.header.frame_id = 'map'
+                    pose.header.stamp = self.get_clock().now().to_msg()
+                    # Convert numpy arrays to float values for ROS2 Point message
+                    x_val = float(q[0])
+                    y_val = float(q[1])
+                    yaw_val = float(q[2])
+                    pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
+                    pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
+                    path_msg.poses.append(pose)
+                for i, pose in enumerate(path_msg.poses[:5]):  # First 5 points
+                    self.get_logger().info(f"First 5 Path point {i}: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})")
+                for i, pose in enumerate(path_msg.poses[-5:]):  # Last 5 points
+                    self.get_logger().info(f"Last 5 Path point {i}: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})")
+                self.get_logger().info(f"Final path_msg has {len(path_msg.poses)} poses")
+                self.path_pub.publish(path_msg)
+                self.publish_path_to_gazebo(path_msg)
+                self.get_logger().info(f"Published path with {len(path_msg.poses)} poses for {self.namespace}")
+                self.path_published_event.set()
+                
+            except Exception as e:
+                self.get_logger().error(f"Error in robot_task for {self.namespace}: {str(e)}")
+                # Reset the flag to allow retry
+                self._task_executed = False
+                raise
+            #waypoints_list, segments = self.get_waypoints(in_pose, graph)
+            '''for i in range(len(graph) - 1):
+                local_path_msg = Path()
+                local_path_msg.header.frame_id = self.start_pose.header.frame_id
+                start = graph[i]
+                end = graph[i + 1]
+                self.get_logger().info(f"Processing segment {i+1}/{len(graph)-1}: {start} -> {end}")
+                
+                dubins_path = DubinsPath(start, end, 0.5)   
+                local_path = dubins_path.plan_path(start, end)'''
+
+            generator = Dubins(3, 0.5)
+            local_path = generator.run(graph)    
+            self.get_logger().info(f"Planned Dubins path with {len(local_path)} points")
+            local_path_msg = Path()
+            local_path_msg.header.frame_id = 'map'
+            for q in local_path:
                 pose = PoseStamped()
                 pose.header.frame_id = 'map'
-                pose.header.stamp = self.get_clock().now().to_msg()
-                # Convert numpy arrays to float values for ROS2 Point message
                 x_val = float(q[0])
                 y_val = float(q[1])
                 yaw_val = float(q[2])
                 pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
                 pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
-                path_msg.poses.append(pose)
-            for i, pose in enumerate(path_msg.poses[:5]):  # First 5 points
-                self.get_logger().info(f"First 5 Path point {i}: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})")
-            for i, pose in enumerate(path_msg.poses[-5:]):  # Last 5 points
-                self.get_logger().info(f"Last 5 Path point {i}: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})")
-            self.get_logger().info(f"Final path_msg has {len(path_msg.poses)} poses")
-            self.path_pub.publish(path_msg)
-            self.publish_path_to_gazebo(path_msg)
-            self.get_logger().info(f"Published path with {len(path_msg.poses)} poses for {self.namespace}")
-            self.path_published_event.set()
+                local_path_msg.poses.append(pose)
             
-        except Exception as e:
-            self.get_logger().error(f"Error in robot_task for {self.namespace}: {str(e)}")
-            # Reset the flag to allow retry
-            self._task_executed = False
-            raise
-        #waypoints_list, segments = self.get_waypoints(in_pose, graph)
-        '''for i in range(len(graph) - 1):
-            local_path_msg = Path()
-            local_path_msg.header.frame_id = self.start_pose.header.frame_id
-            start = graph[i]
-            end = graph[i + 1]
-            self.get_logger().info(f"Processing segment {i+1}/{len(graph)-1}: {start} -> {end}")
             
-            dubins_path = DubinsPath(start, end, 0.5)   
-            local_path = dubins_path.plan_path(start, end)'''
-
-        generator = Dubins(3, 0.5)
-        local_path = generator.run(graph)    
-        self.get_logger().info(f"Planned Dubins path with {len(local_path)} points")
-        local_path_msg = Path()
-        local_path_msg.header.frame_id = 'map'
-        for q in local_path:
+            self.get_logger().info("Sending path to follow action server")
+            self.get_logger().info(f"Sending path with {len(local_path_msg.poses)} points to follow action server")    
+            #success = self.send_follow_path_goal(local_path_msg)
+            success = self.send_follow_path_goal(path_msg)
+            if success:
+                self.get_logger().info("Successfully executed path following")
+            else:
+                self.get_logger().error("Failed to execute path following")
+            self.robot_task_event.set()
+            '''self.publish_velocities(local_path[0], local_path[1])
+            
             pose = PoseStamped()
-            pose.header.frame_id = 'map'
-            x_val = float(q[0])
-            y_val = float(q[1])
-            yaw_val = float(q[2])
-            pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
-            pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
-            local_path_msg.poses.append(pose)
-        
-        
-        self.get_logger().info("Sending path to follow action server")
-        self.get_logger().info(f"Sending path with {len(local_path_msg.poses)} points to follow action server")    
-        #success = self.send_follow_path_goal(local_path_msg)
-        success = self.send_follow_path_goal(path_msg)
-        if success:
-            self.get_logger().info("Successfully executed path following")
+            pose.header.frame_id = "map"
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.pose.position.x = local_path[0]
+            pose.pose.position.y = local_path[1]
+            pose.pose.position.z = 0.0
+            
+            yaw = self.yaw_from_two_points(start[0], start[1], end[0], end[1])
+            quat = tf_transformations.quaternion_from_euler(0, 0, yaw)
+            pose.pose.orientation.x = quat[0]
+            pose.pose.orientation.y = quat[1]
+            pose.pose.orientation.z = quat[2]
+            pose.pose.orientation.w = quat[3]
+            
+            #self.publish_joint_state(pose)
+            #tf_msg = TFMessage()
+            #tf_msg.transforms.append(self.get_transform(pose))
+            #self.tf_pub.publish(tf_msg)
+            path.poses.append(pose)
+                
+            self.get_logger().info(f"Publishing path with {len(path.poses)} poses")
+            if hasattr(self, 'plan_timer') and self.plan_timer is not None:
+                self.plan_timer.cancel()
+                self.plan_timer = None 
+            self.path_pub.publish(path)
+    
+            
+            self.get_logger().info("Sending path to follow action server")
+            success = self.send_follow_path_goal(path)
+            self.get_logger().info(f'Published global plan with {len(path.poses)} poses')
+            self.get_logger().info(f'Path details: {path}')
+                #waypoints = self.create_waypoints(waypoints_list)
+                #self.controller_node.follow_pth(shelfino.client, waypoints)
+                #print(graph)
+                
+                #self.robot_task_event.set()
+                                
+            except Exception as e:
+                self.get_logger().error(f"Task of Robot {self.get_namespace()} failed: {e}", exc_info=True)
+                raise''' 
         else:
-            self.get_logger().error("Failed to execute path following")
-        self.robot_task_event.set()
-        '''self.publish_velocities(local_path[0], local_path[1])
-        
-        pose = PoseStamped()
-        pose.header.frame_id = "map"
-        pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x = local_path[0]
-        pose.pose.position.y = local_path[1]
-        pose.pose.position.z = 0.0
-        
-        yaw = self.yaw_from_two_points(start[0], start[1], end[0], end[1])
-        quat = tf_transformations.quaternion_from_euler(0, 0, yaw)
-        pose.pose.orientation.x = quat[0]
-        pose.pose.orientation.y = quat[1]
-        pose.pose.orientation.z = quat[2]
-        pose.pose.orientation.w = quat[3]
-        
-        #self.publish_joint_state(pose)
-        #tf_msg = TFMessage()
-        #tf_msg.transforms.append(self.get_transform(pose))
-        #self.tf_pub.publish(tf_msg)
-        path.poses.append(pose)
-            
-        self.get_logger().info(f"Publishing path with {len(path.poses)} poses")
-        if hasattr(self, 'plan_timer') and self.plan_timer is not None:
-            self.plan_timer.cancel()
-            self.plan_timer = None 
-        self.path_pub.publish(path)
-  
-        
-        self.get_logger().info("Sending path to follow action server")
-        success = self.send_follow_path_goal(path)
-        self.get_logger().info(f'Published global plan with {len(path.poses)} poses')
-        self.get_logger().info(f'Path details: {path}')
-            #waypoints = self.create_waypoints(waypoints_list)
-            #self.controller_node.follow_pth(shelfino.client, waypoints)
-            #print(graph)
-            
-            #self.robot_task_event.set()
-                              
-        except Exception as e:
-            self.get_logger().error(f"Task of Robot {self.get_namespace()} failed: {e}", exc_info=True)
-            raise''' 
+            return
 
     def yaw_to_quaternion(self, yaw):
         q = tf_transformations.quaternion_from_euler(0, 0, yaw)
@@ -1161,7 +1167,7 @@ class PathPlanner(Node):
 
 
     
-    def sample_point(self, q_goal, max_attempts=100000, goal_bias=0.1):
+    def sample_point(self, q_init, q_goal, initial_range, max_attempts=100000, goal_bias=0.1):
         """
         Pick a random point in the costmap that is free, with a bias towards the goal.
         If a point is not in free space, gradually increases the sampling range.
@@ -1177,10 +1183,10 @@ class PathPlanner(Node):
        
         
         # Define the initial and maximum range for sampling around the goal
-        initial_range = 5.0
-        min_range = 0.5  # Maximum range to avoid sampling too far
+        #initial_range = 5.0
+        min_range = 0.3  # Maximum range to avoid sampling too far
         range_decrement = 1.0  # How much to increase the range each time
-        workspace_bounds = [(-6.0, 6.0), (-6.0, 6.0), (-math.pi, math.pi)] 
+        #workspace_bounds = [(-6.0, 6.0), (-6.0, 6.0), (-math.pi, math.pi)] 
         current_range = initial_range
         
         while current_range >= min_range:
@@ -1197,25 +1203,31 @@ class PathPlanner(Node):
                 )'''
                 
            
-                x = np.random.uniform(q_goal[0] - current_range, q_goal[0] + current_range)
-                y = np.random.uniform(q_goal[1] - current_range, q_goal[1] + current_range)
-                theta = np.random.uniform(q_goal[2] - current_range, q_goal[2] + current_range)
+                x = np.random.uniform(q_goal[0] - min_range, q_goal[0] + min_range)
+                y = np.random.uniform(q_goal[1] - min_range, q_goal[1] + min_range)
+                theta = np.random.uniform(q_goal[2] - min_range, q_goal[2] + min_range)
                 self.get_logger().info(f"Point found: ({x:.2f}, {y:.2f}, {theta:.2f})")
                 
                 # Check if the sampled point is in free space
                 #if self.is_in_free_space((x, y, theta)):
                 #    self.get_logger().info(f"Found valid point: ({x:.2f}, {y:.2f}, {theta:.2f})")
                 #    return (x, y, theta)
-            
-            # If we've exhausted attempts at this range, increase the range
-            current_range -= range_decrement
+                if self.collision_free(q_init, (x, y, theta), self.r):
+                    break
+                else:
+                    if max_attempts >= 100:
+                         min_range += 1.0
+                         print("min_range:", min_range)
+                    continue
+            return (x, y, theta)
+            #current_range -= range_decrement
             self.get_logger().debug(f"Decreased sampling range to ±{current_range:.1f}m around goal")
         return (x, y, theta)
         
         
         # If we've tried all ranges and still haven't found a valid point
         self.get_logger().warn("Failed to find a valid point in free space")
-        return None
+        return q_goal
 
     '''def get_trajectory(self, q_goal, graph):        
         self.get_logger().info("Starting trajectory planning...")
@@ -1390,17 +1402,17 @@ class PathPlanner(Node):
         iteration = 0
         max_iterations = 100
         while self.get_cost(q_goal, q_init)>0.3 and iteration < max_iterations:        
-            q_random = self.sample_point(q_goal)   
+            q_random = self.sample_point(q_init, q_goal, self.get_cost(q_goal, q_init))   
             #if self.is_in_free_space(q_random):
             q_nearest = self.nearest(graph, q_random)
             q_new = self.extend(q_nearest, q_random)
             print("nearest node:", q_nearest)
             print("random node:", q_random)
             print("new node:", q_new)
-            '''if self.collision_free(q_init, q_new, self.r):
+            if self.collision_free(q_init, q_new, self.r):
                 graph.append(q_new)
             else:
-                continue'''
+                continue
             graph.append(q_new)
             q_min= q_nearest
             min_cost = self.get_cost(q_goal, q_nearest) + self.get_cost(q_goal, q_new)
@@ -1415,10 +1427,10 @@ class PathPlanner(Node):
                 #else:
                 #    continue
                 #if (self.is_joint_okay(q_new)) and (not self.is_singular(self.compute_forward_kinematics_from_configuration(q_new))):
-            '''if self.collision_free(q_init, q_min, self.r):
+            if self.collision_free(q_init, q_min, self.r):
                 graph.append(q_min)
             else:
-                continue'''
+                continue
             graph.append(q_min)
             self.get_logger().info(f"New node added: {q_new}")
             for idx, near_node in enumerate(near_nodes):
@@ -1442,7 +1454,8 @@ class PathPlanner(Node):
         :param x: location to check
         :return: True if not inside an obstacle, False otherwise
         """
-        return self.obs.count(x) == 0
+        if self.obs is not None:
+            return self.obs.count(x) == 0
 
     def collision_free(self, start, end, r):
         """
@@ -1452,9 +1465,11 @@ class PathPlanner(Node):
         :param r: resolution of points to sample along edge when checking for collisions
         :return: True if line segment does not intersect an obstacle, False otherwise
         """
-        points = self.es_points_along_line(start, end, r)
-        coll_free = all(map(self.obstacle_free, points))
-        return coll_free
+        if self.obs is not None:
+            points = self.es_points_along_line(start, end, r)
+            coll_free = all(map(self.obstacle_free, points))
+            return coll_free
+  
     
 
     def get_trajectory_new(self, q_goal, graph):
