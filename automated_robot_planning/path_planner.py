@@ -1213,12 +1213,14 @@ class PathPlanner(Node):
                 #    self.get_logger().info(f"Found valid point: ({x:.2f}, {y:.2f}, {theta:.2f})")
                 #    return (x, y, theta)
                 if self.collision_free(q_init, (x, y, theta), self.r):
+                    print("collision_free:", (x, y, theta))
                     break
                 else:
                     if max_attempts >= 100:
                          min_range += 1.0
                          print("min_range:", min_range)
                     continue
+            print("min_point:", (x, y, theta))
             return (x, y, theta)
             #current_range -= range_decrement
             self.get_logger().debug(f"Decreased sampling range to ±{current_range:.1f}m around goal")

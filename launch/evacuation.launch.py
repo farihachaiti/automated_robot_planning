@@ -172,13 +172,13 @@ def is_position_valid(x, y, robot_positions, obstacles, map_bounds, robot_radius
 
     # Check distance from other robots
     for rx, ry, _ in robot_positions:
-        dist = ((x - rx)**2 + (y - ry)**2)**0.5
+        dist = math.hypot(x - rx, y - ry)
         if dist < (2 * robot_radius + min_robot_distance):
             return False
 
     # Check distance from obstacles
     for ox, oy, radius in obstacles:
-        dist = ((x - ox)**2 + (y - oy)**2)**0.5
+        dist = math.hypot(x - ox, y - oy)
         if dist < (radius + robot_radius + min_obstacle_distance):
             return False
     return True
@@ -219,14 +219,14 @@ def load_obstacles_from_yaml(yaml_path):
     """
     obstacles = []
     #map_bounds = (-6.0, 6.0, -6.0, 6.0) 
-    a = 10.0  # hexagon side length
+    '''a = 10.0  # hexagon side length
 
     # Compute workspace bounds
-    x_max = a
-    x_min = -a
-    y_max = math.sqrt(3) * a / 2
-    y_min = -math.sqrt(3) * a / 2
-    map_bounds = (x_min, x_max, y_min, y_max) 
+    x_vals = [p['x'] for p in border_points]
+    y_vals = [p['y'] for p in border_points]
+    x_min, x_max = min(x_vals), max(x_vals)
+    y_min, y_max = min(y_vals), max(y_vals)'''
+    map_bounds = (-10.0, 10.0, -8.66025447845459, 8.66025447845459)
     
     try:
         with open(yaml_path, 'r') as file:
@@ -234,11 +234,11 @@ def load_obstacles_from_yaml(yaml_path):
             
         # Get map dimensions from root parameters
         root_params = config.get('/**', {}).get('ros__parameters', {})
-        dx = float(root_params.get('dx'))
+        '''dx = float(root_params.get('dx'))
         dy = float(root_params.get('dy'))
         
         # Calculate map bounds (centered at origin)
-        map_bounds = (-dx/2, dx/2, -dy/2, dy/2)
+        #map_bounds = (-dx/2, dx/2, -dy/2, dy/2)'''
         
         # Get obstacle parameters
         obs_params = config.get('/**/send_obstacles', {}).get('ros__parameters', {})
