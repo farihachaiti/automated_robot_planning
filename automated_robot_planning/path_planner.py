@@ -32,7 +32,7 @@ from sensor_msgs.msg import LaserScan
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import TransformStamped
 import asyncio
-#from dubins import DubinsPath
+from dubins import DubinsPath
 from dubins_curve import Dubins
 from rcl_interfaces.msg import ParameterDescriptor
 from rcl_interfaces.msg import ParameterType
@@ -873,6 +873,7 @@ class PathPlanner(Node):
                     pose.pose.position = Point(x=x_val, y=y_val, z=0.0)
                     pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
                     path_msg.poses.append(pose)
+                    
                 for i, pose in enumerate(path_msg.poses[:5]):  # First 5 points
                     self.get_logger().info(f"First 5 Path point {i}: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})")
                 for i, pose in enumerate(path_msg.poses[-5:]):  # Last 5 points
@@ -899,9 +900,18 @@ class PathPlanner(Node):
                 dubins_path = DubinsPath(start, end, 0.5)   
                 local_path = dubins_path.plan_path(start, end)'''
 
-            generator = Dubins(3, 0.5)
+            generator = Dubins(0.01, 0.5)
             #dubins_path = DubinsPath(start, goal, 0.5)
-            local_path = generator.run(graph)
+            
+            local_path = []
+            for i in range(len(graph) - 1):
+                start = graph[i]
+                end = graph[i + 1]
+                self.get_logger().info(f"Processing segment {i+1}/{len(graph)-1}: {start} -> {end}")
+                
+                segment = generator.run([start, end])
+                local_path.extend(segment)
+            #local_path = dubins_path.plan_path(start, goal)
             self.get_logger().info(f"Planned Dubins path with {len(local_path)} points")
             local_path_msg = Path()
             local_path_msg.header.frame_id = 'map'
@@ -915,7 +925,7 @@ class PathPlanner(Node):
                 pose.pose.orientation = self.yaw_to_quaternion(yaw_val)
                 local_path_msg.poses.append(pose)
             
-            
+            self.path_pub1.publish(local_path_msg)
             self.get_logger().info("Sending path to follow action server")
             self.get_logger().info(f"Sending path with {len(local_path_msg.poses)} points to follow action server")    
             #success = self.send_follow_path_goal(local_path_msg)
