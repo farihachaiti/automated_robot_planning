@@ -5,7 +5,7 @@ import rclpy
 from rclpy.node import Node
 #from automated_robot_planning.obstacle_detector import ObstacleDetector
 import math
-import dubins
+#import dubins
 import numpy as np
 import tf2_ros
 from nav_msgs.msg import OccupancyGrid, Path
@@ -19,7 +19,9 @@ import xacro
 from tf2_msgs.msg import TFMessage
 from sensor_msgs.msg import JointState
 from nav_msgs.msg import Path, Odometry
-import tf_transformations
+from tf2_ros import TransformBroadcaster, TransformListener, Buffer
+from tf2_ros import TransformException
+from tf2_ros.transformations import quaternion_from_euler, euler_from_quaternion
 import tf2_ros
 from nav2_msgs.action import FollowPath, ComputePathToPose
 from rclpy.action import ActionClient
@@ -28,7 +30,7 @@ from sensor_msgs.msg import LaserScan
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import TransformStamped
 import asyncio
-from dubins import DubinsPath
+#from dubins import DubinsPath
 from dubins_curve import Dubins
 from rcl_interfaces.msg import ParameterDescriptor
 from rcl_interfaces.msg import ParameterType
@@ -92,7 +94,7 @@ class PathPlanner(Node):
         self.start_pose.pose.position.x = self.initial_x
         self.start_pose.pose.position.y = self.initial_y
         self.start_pose.pose.position.z = 0.0
-        q = tf_transformations.quaternion_from_euler(0, 0, self.initial_yaw)
+        q = quaternion_from_euler(0, 0, self.initial_yaw)
         self.start_pose.pose.orientation.x = q[0]
         self.start_pose.pose.orientation.y = q[1]
         self.start_pose.pose.orientation.z = q[2]
@@ -329,7 +331,7 @@ class PathPlanner(Node):
         self.goal_pose.pose.orientation.y = self.gate_position.orientation.y
         self.goal_pose.pose.orientation.z = self.gate_position.orientation.z
         self.goal_pose.pose.orientation.w = self.gate_position.orientation.w 
-        #_, _, yaw = tf_transformations.euler_from_quaternion([self.goal_pose.pose.orientation.x, self.goal_pose.pose.orientation.y, self.goal_pose.pose.orientation.z, self.goal_pose.pose.orientation.w])
+        #_, _, yaw = euler_from_quaternion([self.goal_pose.pose.orientation.x, self.goal_pose.pose.orientation.y, self.goal_pose.pose.orientation.z, self.goal_pose.pose.orientation.w])
         #self.goal_pose_publisher.publish(self.goal_pose)
         #self.compute_robots_paths()
         self.goal_set_event.set()
@@ -385,7 +387,7 @@ class PathPlanner(Node):
         self.gazebo_marker_pub.publish(marker_array)
         
     def odom_callback(self, msg: Odometry):
-        _, _, yaw = tf_transformations.euler_from_quaternion([msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w])
+        _, _, yaw = euler_from_quaternion([msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w])
         self.get_current_pos_and_or = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw) # geometry_msgs/Pose
 
     def send_follow_path_goal(self, path_msg, max_retries=3):
@@ -895,7 +897,8 @@ class PathPlanner(Node):
                 local_path = dubins_path.plan_path(start, end)'''
 
             generator = Dubins(3, 0.5)
-            local_path = generator.run(graph)    
+            #dubins_path = DubinsPath(start, goal, 0.5)
+            local_path = generator.run(graph)
             self.get_logger().info(f"Planned Dubins path with {len(local_path)} points")
             local_path_msg = Path()
             local_path_msg.header.frame_id = 'map'
@@ -929,7 +932,7 @@ class PathPlanner(Node):
             pose.pose.position.z = 0.0
             
             yaw = self.yaw_from_two_points(start[0], start[1], end[0], end[1])
-            quat = tf_transformations.quaternion_from_euler(0, 0, yaw)
+            quat = quaternion_from_euler(0, 0, yaw)
             pose.pose.orientation.x = quat[0]
             pose.pose.orientation.y = quat[1]
             pose.pose.orientation.z = quat[2]
@@ -965,7 +968,7 @@ class PathPlanner(Node):
             return
 
     def yaw_to_quaternion(self, yaw):
-        q = tf_transformations.quaternion_from_euler(0, 0, yaw)
+        q = quaternion_from_euler(0, 0, yaw)
         return Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
         
     def pose_to_tuple(self, pose: Pose):
@@ -1642,7 +1645,7 @@ class PathPlanner(Node):
 
 
     def quaternion_to_yaw(self, q: Quaternion):
-        _, _, gateyaw = tf_transformations.euler_from_quaternion([q.x, q.y, q.z, q.w])
+        _, _, gateyaw = euler_from_quaternion([q.x, q.y, q.z, q.w])
 
         return (gateyaw + math.pi) % (2 * math.pi) - math.pi
 
