@@ -21,7 +21,9 @@ from sensor_msgs.msg import JointState
 from nav_msgs.msg import Path, Odometry
 from tf2_ros import TransformBroadcaster, TransformListener, Buffer
 from tf2_ros import TransformException
-from tf2_ros.transformations import quaternion_from_euler, euler_from_quaternion
+
+
+
 import tf2_ros
 from nav2_msgs.action import FollowPath, ComputePathToPose
 from rclpy.action import ActionClient
@@ -205,6 +207,7 @@ class PathPlanner(Node):
         self.path_published_event = asyncio.Event()
         self.robot_task_event = asyncio.Event()
         self.navigation_complete = asyncio.Event()
+
 
     # ################################ These three functions are part of the logic that calls the action server for computing a path, and then saving that path object in the dedicated dictionary. ######################
     def compute_robots_paths(self):
@@ -1696,6 +1699,48 @@ class PathPlanner(Node):
 if __name__ == '__main__':
     main()'''
 
+def quaternion_from_euler(ai, aj, ak):
+    """Convert Euler angles to quaternion."""
+    # Roll (x), Pitch (y), Yaw (z)
+    cy = np.cos(ak * 0.5)
+    sy = np.sin(ak * 0.5)
+    cp = np.cos(aj * 0.5)
+    sp = np.sin(aj * 0.5)
+    cr = np.cos(ai * 0.5)
+    sr = np.sin(ai * 0.5)
+    
+    w = cr * cp * cy + sr * sp * sy
+    x = sr * cp * cy - cr * sp * sy
+    y = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+    
+    return [x, y, z, w]
+
+def euler_from_quaternion(quat):
+    """Convert quaternion to Euler angles (roll, pitch, yaw)."""
+    if isinstance(quat, (list, tuple, np.ndarray)) and len(quat) == 4:
+        x, y, z, w = quat
+    else:
+        x, y, z, w = quat.x, quat.y, quat.z, quat.w
+    
+    # Roll (x-axis rotation)
+    sinr_cosp = 2 * (w * x + y * z)
+    cosr_cosp = 1 - 2 * (x * x + y * y)
+    roll = np.arctan2(sinr_cosp, cosr_cosp)
+    
+    # Pitch (y-axis rotation)
+    sinp = 2 * (w * y - z * x)
+    if abs(sinp) >= 1:
+        pitch = np.copysign(np.pi / 2, sinp)  # Use 90 degrees if out of range
+    else:
+        pitch = np.arcsin(sinp)
+    
+    # Yaw (z-axis rotation)
+    siny_cosp = 2 * (w * z + x * y)
+    cosy_cosp = 1 - 2 * (y * y + z * z)
+    yaw = np.arctan2(siny_cosp, cosy_cosp)
+    
+    return [roll, pitch, yaw]
 
 async def ros_spin(node: Node):
     cancel = node.create_guard_condition(lambda: None)
@@ -1719,7 +1764,6 @@ async def ros_spin(node: Node):
     fut.cancel()  # Signal the spinning thread to stop
     thread.join()
     node.destroy_guard_condition(cancel)
-
 
 async def main():
     rclpy.init()
