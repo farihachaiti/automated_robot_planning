@@ -57,9 +57,10 @@ class PathPlanner(Node):
         self.costmap_resolution = 0.05000000074505806
         self.costmap_size = [60, 60]
         self.costmap_origin = (-1.45, -1.45)
+        # Use explicit dtype with full numpy.dtype specification for NumPy 2.0+ compatibility
         self.local_costmap = np.zeros(
             (60, 60),  # (height, width)
-            dtype=np.int8
+            dtype=np.dtype('int8')
         )
         #self.robot = ObstacleDetector.polygon_offsetting(robot, 0.1, isRobot=True)
         self.safety_distance = 0.1
@@ -80,8 +81,8 @@ class PathPlanner(Node):
         obstacles = self.get_parameter('obstacles').get_parameter_value().string_value
         flat_obstacles = [float(x) for x in obstacles.split(',')]
         # Now reconstruct as needed
-        self.obstacles = [(flat_obstacles[i], flat_obstacles[i+1], flat_obstacles[i+2]) for i in range(0, len(flat_obstacles), 3)]
-
+        #self.obstacles = [(flat_obstacles[i], flat_obstacles[i+1], flat_obstacles[i+2]) for i in range(0, len(flat_obstacles), 3)]
+        
         self.initial_x = self.get_parameter('initial_x').value
         self.initial_y = self.get_parameter('initial_y').value
         self.initial_yaw = self.get_parameter('initial_yaw').value
