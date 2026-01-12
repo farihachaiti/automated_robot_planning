@@ -900,7 +900,7 @@ class PathPlanner(Node):
                 dubins_path = DubinsPath(start, end, 0.5)   
                 local_path = dubins_path.plan_path(start, end)'''
 
-            generator = Dubins(0.01, 0.5)
+            generator = Dubins(0.01, 5.0)
             #dubins_path = DubinsPath(start, goal, 0.5)
             
             local_path = []
@@ -929,7 +929,7 @@ class PathPlanner(Node):
             self.get_logger().info("Sending path to follow action server")
             self.get_logger().info(f"Sending path with {len(local_path_msg.poses)} points to follow action server")    
             #success = self.send_follow_path_goal(local_path_msg)
-            success = self.send_follow_path_goal(path_msg)
+            success = self.send_follow_path_goal(local_path_msg)
             if success:
                 self.get_logger().info("Successfully executed path following")
             else:
