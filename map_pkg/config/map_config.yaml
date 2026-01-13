@@ -1,7 +1,7 @@
 /**/send_obstacles:
   ros__parameters:
     n_obstacles: 2                                # Number of RANDOM obstacles to be spawned
-    no_cylinders: false                           # If true, no cylinders will be spawned
+    no_cylinders: True                           # If true, no cylinders will be spawned
     no_boxes: false                               # If true, no boxes will be spawned
     max_size: 1.0                                 # Maximum size of the random obstacles
     min_size: 0.5                                 # Minimum size of the random obstacles
@@ -35,15 +35,15 @@
     
 /**:
   ros__parameters:
-    map: hexagon              # Maps can be "hexagon" or "rectangle"
-    dx: 10.0                    # The width of the rectangle or the length of the hexagon's edges. Default edge used in hexagon.world is 12.0
+    map: rectangle              # Maps can be "hexagon" or "rectangle"
+    dx: 20.0                    # The width of the rectangle or the length of the hexagon's edges. Default edge used in hexagon.world is 12.0
     dy: 20.0                    # The height of the rectangle. Not used in hexagon maps
     max_timeout: 3              # Maximum time to spawn the map. NOT MAINTAINED
     
     init_names: ["shelfino1", "evader", "shelfino3", "pursuer"]   # Names of the robots to be spawned
     init_rand: [true, false, false, false]                       # If true, the robots will be spawned in random positions
-    init_x:   [5.5, -5.5,  5.5, -5.5]                             # X position of the robots
-    init_y:   [5.5, -5.5, -5.5,  5.5]                             # Y position of the robots
+    init_x:   [4.5, -4.5,  4.5, -4.5]                             # X position of the robots
+    init_y:   [4.5, -4.5, -4.5,  4.5]                             # Y position of the robots
     init_yaw: [0.0,  0.0,  0.0,  0.0]                             # Yaw of the robots
 
     qos_overrides:

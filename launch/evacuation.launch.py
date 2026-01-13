@@ -70,7 +70,7 @@ def evaluate_rviz(context):
         
         # Create a single TF display that will show all frames
         tf_display_added = False
-        
+        robot_model_added = False
         # First add all non-TF and non-template displays
         for display in displays:
             if type(display) is not dict:
@@ -84,7 +84,12 @@ def evaluate_rviz(context):
                     tf_display = display.copy()
                     tf_display_added = True
                 continue
-                
+            if display.get('Class') == 'rviz_default_plugins/RobotModel':
+                # Save the first robot model display config to use later
+                if not robot_model_added:
+                    robot_model_display = display.copy()
+                    robot_model_added = True
+                continue
             # Handle template displays with shelfinoX
             if "shelfinoX" in str(display):
                 display_str = str(display)
@@ -116,6 +121,19 @@ def evaluate_rviz(context):
                 'Marker Scale': 1.0
             }
             output_config['Visualization Manager']['Displays'].append(basic_tf)
+
+        # In the evaluate_rviz function, after handling TF displays and before handling tools, add:
+
+        # Add RobotModel displays for each shelfino
+        if robot_model_added:
+            if "shelfinoX" in str(robot_model_display):
+                display_str = str(robot_model_display)
+                for shelfino_id in range(int(context.launch_configurations['n_shelfini'])):
+                    output_config['Visualization Manager']['Displays'].append(
+                        yaml.load(display_str.replace("shelfinoX", "shelfino" + str(shelfino_id)), Loader=yaml.FullLoader))
+            else:
+                # Add all other displays
+                output_config['Visualization Manager']['Displays'].append(robot_model_display)
 
         tools = rviz_config['Visualization Manager']['Tools']
         output_config['Visualization Manager']['Tools'] = []
@@ -559,7 +577,7 @@ def generate_launch_description():
     fastdds_config = SetEnvironmentVariable('FASTRTPS_DEFAULT_PROFILES_FILE', 
                                           os.path.join(os.getcwd(), 'fastdds_no_shm.xml'))
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
-    n_shelfini = LaunchConfiguration('n_shelfini', default='3')
+    n_shelfini = LaunchConfiguration('n_shelfini', default='2')
     map_file_path = os.path.join(shelfino_nav2_pkg, 'maps', 'dynamic_map.yaml')
     use_gui = LaunchConfiguration('use_gui', default='true')
     use_rviz = LaunchConfiguration('use_rviz', default='true')

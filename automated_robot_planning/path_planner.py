@@ -900,7 +900,7 @@ class PathPlanner(Node):
                 dubins_path = DubinsPath(start, end, 0.5)   
                 local_path = dubins_path.plan_path(start, end)'''
 
-            generator = Dubins(0.01, 5.0)
+            generator = Dubins(0.01, 3.0)
             #dubins_path = DubinsPath(start, goal, 0.5)
             
             local_path = []
